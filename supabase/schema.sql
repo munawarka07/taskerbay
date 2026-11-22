@@ -208,7 +208,7 @@ returns boolean language sql stable security definer set search_path = public as
 $$;
 
 create or replace function public.touch_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = public as $$
 begin new.updated_at = now(); return new; end $$;
 
 drop trigger if exists tasks_touch on public.tasks;
@@ -316,7 +316,7 @@ alter table public.budgets            enable row level security;
 drop policy if exists "profiles read" on public.profiles;
 create policy "profiles read" on public.profiles for select using (id = auth.uid() or public.shares_workspace(id));
 drop policy if exists "profiles update self" on public.profiles;
-create policy "profiles update self" on public.profiles for update using (id = auth.uid());
+create policy "profiles update self" on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
 
 -- workspaces
 drop policy if exists "ws read" on public.workspaces;
@@ -391,3 +391,31 @@ end $$;
 -- Realtime needs full rows on delete for filtered subscriptions
 alter table public.tasks replica identity full;
 alter table public.task_updates replica identity full;
+
+-- =====================================================================
+-- Hardening: who may call which helper, and table access for signed-in users
+-- =====================================================================
+-- Internal setup functions: only the database itself may run them
+revoke execute on function public.seed_workspace(uuid) from public, anon, authenticated;
+revoke execute on function public.seed_user_routine(uuid) from public, anon, authenticated;
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+-- App functions: signed-in users only
+revoke execute on function public.create_workspace(text, text) from public, anon;
+grant execute on function public.create_workspace(text, text) to authenticated;
+revoke execute on function public.accept_my_invites() from public, anon;
+grant execute on function public.accept_my_invites() to authenticated;
+-- Membership checks used by the security rules
+revoke execute on function public.is_member(uuid) from public, anon;
+revoke execute on function public.is_admin(uuid) from public, anon;
+revoke execute on function public.shares_workspace(uuid) from public, anon;
+grant execute on function public.is_member(uuid), public.is_admin(uuid), public.shares_workspace(uuid) to authenticated;
+
+-- Signed-in users can reach the tables (row-level security above still limits every row); visitors who aren't signed in get nothing
+do $$
+declare t text;
+begin
+  foreach t in array array['profiles','workspaces','workspace_members','workspace_invites','workflows','tasks','task_updates','notifications','automations','routine_items','routine_logs','journal','focus_sessions','expenses','budgets'] loop
+    execute format('revoke all on public.%I from anon', t);
+    execute format('grant select, insert, update, delete on public.%I to authenticated', t);
+  end loop;
+end $$;
