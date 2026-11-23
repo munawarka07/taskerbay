@@ -465,3 +465,9 @@ alter table public.push_subscriptions enable row level security;
 -- Members of the workspace can read/send; authors can delete their own; RESTRICTIVE "approved only" applies.
 -- Trigger chat_notify (private.chat_notify) sends one Inbox alert per room until read (assignee, creator and
 -- earlier chatters for task chats; all members for team chat). Both tables are in the realtime publication.
+
+-- v5 (Nov 2026): instant popups. private.push_now(payload) posts to the push Edge Function via pg_net.
+-- Triggers: notification_push (new or refreshed Inbox alert -> {notification_id}) and task_push (task saved or
+-- rescheduled close to now -> {task_id}). pg_cron 'taskerbay-push' now runs every minute for time-based
+-- reminders and the 9 AM summary. The function claims a row (pushed_at / reminded_at) before sending, so nothing
+-- is sent twice.

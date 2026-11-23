@@ -1,4 +1,5 @@
-// TaskerBay push sender. Runs every 5 minutes (pg_cron) and on demand for a test popup.
+// TaskerBay push sender. Called instantly by database triggers (new alerts, tasks due soon),
+// every minute by pg_cron, and on demand for a test popup.
 // Sends: 9 AM morning summary (in each person's own timezone), task reminders 15 min before
 // the due time, routine reminders at their time, and new Inbox items.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -55,7 +56,42 @@ Deno.serve(async (req) => {
     return json({ sent: n, devices: subs?.length || 0 });
   }
 
-  // Scheduled run
+  const reqBody = await req.json().catch(() => ({}));
+  const inboxUrl = (n: { task_id: string | null; body: string }) => n.task_id ? `${SITE}#task=${n.task_id}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : /^💬/.test(n.body) ? `${SITE}#chat` : `${SITE}#inbox`;
+  const inboxTitle = (body: string) => /^New sign-up request/.test(body) ? "👤 New sign-up request" : "TaskerBay";
+
+  // Instant: one Inbox alert, called by the database the moment it is created
+  if (reqBody.notification_id) {
+    const { data: n } = await db.from("notifications").select("id, user_id, body, task_id, read, pushed_at").eq("id", reqBody.notification_id).maybeSingle();
+    if (!n || n.read || n.pushed_at) return json({ skipped: true });
+    const { data: subs } = await db.from("push_subscriptions").select("*").eq("user_id", n.user_id);
+    if (!subs?.length) return json({ devices: 0 });
+    // claim it first so the every-minute run can't send it a second time
+    const { data: mine } = await db.from("notifications").update({ pushed_at: new Date().toISOString() }).eq("id", n.id).is("pushed_at", null).select("id");
+    if (!mine?.length) return json({ skipped: true });
+    const sent = await sendTo(subs, { title: inboxTitle(n.body), body: n.body, url: inboxUrl(n), tag: `n-${n.id}` });
+    if (!sent) await db.from("notifications").update({ pushed_at: null }).eq("id", n.id);
+    return json({ sent });
+  }
+
+  // Instant: a task saved with a time in the next 15 minutes
+  if (reqBody.task_id) {
+    const { data: t } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, completed_at, assignee_id, created_by").eq("id", reqBody.task_id).maybeSingle();
+    if (!t || t.reminded_at || t.completed_at || !t.due_time) return json({ skipped: true });
+    const uid = t.assignee_id || t.created_by; if (!uid) return json({ skipped: true });
+    const { data: p } = await db.from("profiles").select("timezone").eq("id", uid).maybeSingle();
+    const now = localNow(p?.timezone || "Asia/Dubai"), dm = toMin(t.due_time)!;
+    if (t.due_date !== now.day || now.min < dm - 15 || now.min > dm + 60) return json({ later: true });
+    const { data: subs } = await db.from("push_subscriptions").select("*").eq("user_id", uid);
+    if (!subs?.length) return json({ devices: 0 });
+    const { data: claim } = await db.from("tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id).is("reminded_at", null).select("id");
+    if (!claim?.length) return json({ skipped: true });
+    const left = dm - now.min;
+    const sent = await sendTo(subs, { title: left > 0 ? `Due in ${left} min` : "Due now", body: `${t.title} · ${fmt(t.due_time)}`, url: `${SITE}#task=${t.id}`, tag: `task-${t.id}` });
+    return json({ sent });
+  }
+
+  // Scheduled run (every minute): morning summary, reminders as their time arrives, anything missed above
   const { data: subs } = await db.from("push_subscriptions").select("*");
   if (!subs?.length) return json({ users: 0 });
   const byUser = new Map<string, Sub[]>();
@@ -91,9 +127,10 @@ Deno.serve(async (req) => {
     for (const t of list) {
       const dm = toMin(t.due_time); if (dm === null || t.reminded_at || t.due_date !== now.day) continue;
       if (now.min >= dm - 15 && now.min <= dm + 60) {
+        const { data: claim } = await db.from("tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id).is("reminded_at", null).select("id");
+        if (!claim?.length) continue;
         const left = dm - now.min;
-        await sendTo(mine, { title: left > 0 ? `Due in ${left} min` : "Due now", body: `${t.title} · ${fmt(t.due_time)}`, url: `${SITE}#task=${t.id}`, tag: `task-${t.id}` });
-        await db.from("tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id); stats.tasks++;
+        await sendTo(mine, { title: left > 0 ? `Due in ${left} min` : "Due now", body: `${t.title} · ${fmt(t.due_time)}`, url: `${SITE}#task=${t.id}`, tag: `task-${t.id}` }); stats.tasks++;
       }
     }
 
@@ -111,11 +148,11 @@ Deno.serve(async (req) => {
     // 4) New Inbox items (assignments, comments, automations)
     const { data: notes } = await db.from("notifications").select("id, body, task_id").eq("user_id", p.id).is("pushed_at", null).eq("read", false)
       .gte("created_at", new Date(Date.now() - 6 * 3600e3).toISOString()).order("created_at").limit(5);
-    for (const n of notes || []) {
-      await sendTo(mine, { title: /^New sign-up request/.test(n.body) ? "👤 New sign-up request" : "TaskerBay", body: n.body, url: n.task_id ? `${SITE}#task=${n.task_id}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : /^💬/.test(n.body) ? `${SITE}#chat` : `${SITE}#inbox`, tag: `n-${n.id}` });
-      stats.inbox++;
+    if (notes?.length) {
+      const { data: claimed } = await db.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notes.map(n => n.id)).is("pushed_at", null).select("id");
+      const ok = new Set((claimed || []).map(c => c.id));
+      for (const n of notes) { if (!ok.has(n.id)) continue; await sendTo(mine, { title: inboxTitle(n.body), body: n.body, url: inboxUrl(n), tag: `n-${n.id}` }); stats.inbox++; }
     }
-    if (notes?.length) await db.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notes.map(n => n.id));
   }
   return json(stats);
 });
