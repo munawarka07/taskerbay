@@ -113,6 +113,10 @@ const cloud = {
     };
     WS_TABLES.forEach(t => channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `workspace_id=eq.${ws}` }, apply(t)));
     USER_TABLES.forEach(t => channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `user_id=eq.${S.user.id}` }, apply(t)));
+    // Deletions can't be filtered by Supabase, so listen to them separately (only the row's id is sent)
+    [...WS_TABLES, ...USER_TABLES].forEach(t => channel.on("postgres_changes", { event: "DELETE", schema: "public", table: t }, p => {
+      if (p.old && PK[t].every(k => p.old[k] != null)) { localRemove(t, p.old); emit(); }
+    }));
     channel.subscribe(status => { S.online = status === "SUBSCRIBED"; emit(); });
   },
   async insert(t, row) { const c = await sbClient(); const { error } = await c.from(t).insert(row); if (error) throw error; },
@@ -136,6 +140,7 @@ const cloud = {
     return data?.result;
   },
   async updateProfile(patch) { await this.update("profiles", { id: S.user.id }, patch); },
+  async refresh() { const ws = S.wsId; await this.loadAll(); if (ws && S.db.workspaces.some(w => w.id === ws)) await this.loadWorkspace(ws); emit(); },
   async savePush(sub) { const c = await sbClient(); const { error } = await c.from("push_subscriptions").upsert({ ...sub, user_id: S.user.id }, { onConflict: "endpoint" }); if (error) throw error; },
   async removePush(endpoint) { const c = await sbClient(); await c.from("push_subscriptions").delete().eq("endpoint", endpoint); },
   async myAccess() { const c = await sbClient(); const { data, error } = await c.from("profiles").select("approved, is_admin, full_name").eq("id", S.user.id).maybeSingle(); if (error) throw error; return data || { approved: false, is_admin: false }; },

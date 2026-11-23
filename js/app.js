@@ -957,7 +957,7 @@ function chooser() {
   ${AI_ON ? `<button class="ai-btn" data-action="capture" style="width:100%;justify-content:center;padding:14px;margin-top:4px"><span class="spark">✨</span>Just say it, Claude sorts it out</button>` : ""}`);
 }
 /* ================= Bulk add: paste many lines, each becomes a task ================= */
-const WORK_RX = /\b(payroll|payslips?|salar(y|ies)|wps|hr|invoices?|clients?|meetings?|reports?|visa|labou?r|mohre|employees?|staff|leaves?|gratuity|offer letters?|contracts?|audit|vat|finance|office|manager|boss|team|project|onboarding|recruit\w*|interview\w*|attendance|overtime|eosb|insurance|emirates id|approval)\b/i;
+const WORK_RX = /\b(payroll|payslips?|salar(y|ies)|wps|hr|invoices?|clients?|meetings?|reports?|visa|labou?r|mohre|employees?|staff|leaves?|gratuity|offer letters?|contracts?|audit|vat|finance|office|manager|boss|team|project|onboarding|recruit\w*|interview\w*|attendance|overtime|eosb|insur\w*|emirates id|approval|fines?|signatures?|d?docs?|documents?|process\w*|procee+d\w*|check with|follow up with|medical|passport|resignation|termination|settlement|allowances?|deductions?|bonus|appraisal)\b/i;
 const URGENT_RX = /\b(urgent|asap|immediately|important|critical|today itself)\b/i;
 function nextWorkday(from = new Date()) { let d = addDays(from, 1); while (d.getDay() === 0 || d.getDay() === 6) d = addDays(d, 1); return dkey(d); } // UAE weekend: Sat & Sun
 function splitBulk(text) {
@@ -967,7 +967,7 @@ function splitBulk(text) {
 }
 function bulkParse(text) {
   const def = U.bulk.def;
-  return splitBulk(text).map(line => {
+  const rows = splitBulk(text).map(line => {
     const it = U.bulk.allowUpdates ? parseIntent(line) : null;
     if (it) return { on: true, kind: "update", line, task: it.task, stage: it.stage, note: it.note, due_date: it.due_date ?? it.task.due_date, due_time: it.due_time ?? (it.task.due_time ? fmtTime(it.task.due_time) : "") };
     const q = parseQuick(line.replace(/^\+\s*/, ""));
@@ -977,9 +977,14 @@ function bulkParse(text) {
       area: /#(w|work|p|personal|proj)/i.test(line) ? q.area : WORK_RX.test(line) ? "Work" : (isTeam() ? "Work" : "Personal"),
       priority: /![hml123]/i.test(line) ? q.priority : URGENT_RX.test(line) ? "High" : q.priority,
       due_date: explicitDate ? q.due_date : def.date, due_time: explicitTime ? q.due_time : def.time,
-      auto: !explicitDate || !explicitTime, assignee_id: q.assignee_id, repeat: q.repeat, starred: q.starred
+      auto: !explicitDate || !explicitTime, assignee_id: q.assignee_id, repeat: q.repeat, starred: q.starred,
+      guessed: !/#(w|work|p|personal|proj)/i.test(line) && !WORK_RX.test(line)
     };
-  });
+  }).map(r => r.kind === "new" ? { ...r, title: r.title.charAt(0).toUpperCase() + r.title.slice(1) } : r);
+  // a list that is mostly work items is treated as all work (and the same for personal)
+  const news = rows.filter(r => r.kind === "new"), work = news.filter(r => !r.guessed && r.area === "Work").length;
+  if (news.length > 2 && work >= news.length / 2) news.forEach(r => { if (r.guessed) r.area = "Work"; });
+  return rows;
 }
 function bulkSheet(prefill = "") {
   U.bulk = { def: { date: nextWorkday(), time: "09:00" }, rows: [], allowUpdates: true };
@@ -1663,6 +1668,15 @@ async function boot() {
     }
     onChange(() => { if (S.mode === "claude") AI_ON = ENABLE_AI && api.hasAI(); render(); });
     E.runOverdue(); setInterval(() => E.runOverdue(), 3600e3);
+    // Coming back to the app (phone unlocked, tab reopened, back online): fetch the latest from every device
+    if (S.mode === "cloud") {
+      let hiddenAt = 0, busy = false;
+      const resync = async () => { if (busy) return; busy = true; try { await api.refresh(); } catch (e) {} busy = false; };
+      document.addEventListener("visibilitychange", () => { if (document.hidden) hiddenAt = Date.now(); else if (hiddenAt && Date.now() - hiddenAt > 15e3) resync(); });
+      addEventListener("online", resync);
+      addEventListener("pageshow", e => { if (e.persisted) resync(); });
+      setInterval(() => { if (!document.hidden) resync(); }, 5 * 60e3);
+    }
     let lastDay = dkey(); setInterval(() => { if (dkey() !== lastDay) { lastDay = dkey(); U.plan = null; U.planState = "idle"; render(); } }, 60e3);
   } catch (e) {
     console.error(e);
