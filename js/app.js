@@ -86,7 +86,9 @@ function parseQuick(text) {
   // "remind me at 10.45 pm regarding payroll", "reminder: ...", "set a reminder ..." -> pop up exactly at that time
   if (/^\s*(please\s+|pls\s+|kindly\s+)?(remind(er)?s?\b|set\s+(a\s+)?reminder|alert\s+me)/i.test(text)) out.remind_before = 0;
   const lws = words.map(w => w.toLowerCase().replace(/[,.;!?]+$/, ""));
-  const setTime = (h, m) => { if (h < 24 && m < 60) { out.due_time = `${pad(h)}:${pad(m)}`; if (!out.due_date) out.due_date = dkey(today); return true; } return false; };
+  let autoDay = false;
+  const withYear = (d, y, k) => { if (/^20\d{2}$/.test(y || "")) { used.add(k); return `${y}${d.slice(4)}`; } return d; };
+  const setTime = (h, m) => { if (h < 24 && m < 60) { out.due_time = `${pad(h)}:${pad(m)}`; if (!out.due_date) { out.due_date = dkey(today); autoDay = true; } return true; } return false; };
   for (let i = 0; i < words.length; i++) {
     const w = words[i], lw = lws[i], nx = lws[i + 1] || "";
     const take = (...idx) => idx.forEach(k => used.add(k));
@@ -103,8 +105,13 @@ function parseQuick(text) {
     if (lw.startsWith("@") && lw.length > 1) { const p = S.db.profiles.find(p => p.full_name.toLowerCase().startsWith(lw.slice(1))); if (p) { out.assignee_id = p.id; take(i); continue; } }
     if (/^(every|each)$/.test(lw) && /^(day|weekday|week|month)$/.test(nx)) { out.repeat = { day: "daily", weekday: "weekdays", week: "weekly", month: "monthly" }[nx]; take(i, i + 1); continue; }
     if (lw === "daily") { out.repeat = "daily"; take(i); continue; }
-    if (lw === "today" || lw === "tod" || lw === "tonight") { out.due_date = dkey(today); if (lw === "tonight" && !out.due_time) out.due_time = "20:00"; take(i); continue; }
+    if (lw === "today" || lw === "tod" || lw === "tonight") { autoDay = false; out.due_date = dkey(today); if (lw === "tonight" && !out.due_time) out.due_time = "20:00"; take(i); continue; }
     if (lw === "tomorrow" || lw === "tmr" || lw === "tmrw") { out.due_date = dkey(addDays(today, 1)); take(i); continue; }
+    if (lw === "day" && nx === "after" && lws[i + 2] === "tomorrow") { out.due_date = dkey(addDays(today, 2)); take(i, i + 1, i + 2); i += 2; continue; }
+    if (/^(eod|cob|eob)$/.test(lw) || (/^(end|close)$/.test(lw) && nx === "of" && /^(day|business|today)$/.test(lws[i + 2] || ""))) { if (!out.due_date) out.due_date = dkey(today); if (!out.due_time) out.due_time = "17:00"; if (lw === "end" || lw === "close") { take(i, i + 1, i + 2); i += 2; } else take(i); continue; }
+    if (lw === "eow" || (lw === "end" && nx === "of" && /^(the|this)?$/.test(lws[i + 2] === "week" ? "" : lws[i + 2]) && (lws[i + 2] === "week" || lws[i + 3] === "week"))) { let n = (5 - today.getDay() + 7) % 7; out.due_date = dkey(addDays(today, n)); if (!out.due_time) out.due_time = "17:00"; const k = lw === "eow" ? 1 : lws[i + 2] === "week" ? 3 : 4; for (let j = 0; j < k; j++) take(i + j); i += k - 1; continue; }
+    if (lw === "eom" || (lw === "end" && nx === "of" && (lws[i + 2] === "month" || lws[i + 3] === "month"))) { out.due_date = dkey(new Date(today.getFullYear(), today.getMonth() + 1, 0)); const k = lw === "eom" ? 1 : lws[i + 2] === "month" ? 3 : 4; for (let j = 0; j < k; j++) take(i + j); i += k - 1; continue; }
+    if (lw === "next" && nx === "month") { const d = new Date(today.getFullYear(), today.getMonth() + 1, 1); d.setDate(Math.min(today.getDate(), new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); out.due_date = dkey(d); take(i, i + 1); i++; continue; }
     if (lw === "nextweek" || (lw === "next" && nx === "week")) { out.due_date = dkey(addDays(today, 7)); take(i); if (lw === "next") take(i + 1); continue; }
     // relative: "after 2 minutes", "in 30 mins", "within 1 hour", "in 2 days", "after a week", "in half an hour", "2 hours later"
     {
@@ -112,8 +119,11 @@ function parseQuick(text) {
       const num = x => /^\d{1,4}$/.test(x) ? +x : { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, ten: 10, fifteen: 15, twenty: 20, thirty: 30 }[x];
       let n = null, u = null, span = 0;
       if (/^(in|after|within)$/.test(lw)) {
-        if (nx === "half" && /^(an?|hour)$/.test(lws[i + 2] || "")) { n = 30; u = 1; span = lws[i + 2] === "hour" ? 3 : 4; }
-        else { const mm = (nx || "").match(/^(\d{1,4})(mins?|minutes?|m|hrs?|hours?|h|days?|weeks?)$/); if (mm) { n = +mm[1]; u = UNIT[mm[2]]; span = 2; } else if (num(nx) != null && UNIT[lws[i + 2]]) { n = num(nx); u = UNIT[lws[i + 2]]; span = 3; } }
+        const o = nx === "the" && lws[i + 2] === "next" ? 2 : nx === "next" && /^\d|^(an?|one|two|three|five|ten)$/.test(lws[i + 2] || "") ? 1 : 0;
+        if (o) { lws.splice(i + 1, o); words.splice(i + 1, o); }
+        const nx2 = lws[i + 1] || "";
+        if (nx2 === "half" && /^(an?|hour)$/.test(lws[i + 2] || "")) { n = 30; u = 1; span = lws[i + 2] === "hour" ? 3 : 4; }
+        else { const mm = (nx2 || "").match(/^(\d{1,4})(mins?|minutes?|m|hrs?|hours?|h|days?|weeks?)$/); if (mm) { n = +mm[1]; u = UNIT[mm[2]]; span = 2; } else if (num(nx2) != null && UNIT[lws[i + 2]]) { n = num(nx2); u = UNIT[lws[i + 2]]; span = 3; } }
       } else if (num(lw) != null && UNIT[nx] && /^(later|from)$/.test(lws[i + 2] || "")) { n = num(lw); u = UNIT[nx]; span = lws[i + 2] === "from" && lws[i + 3] === "now" ? 4 : 3; }
       if (n != null && u) {
         const at = new Date(Date.now() + n * u * 60e3);
@@ -128,24 +138,30 @@ function parseQuick(text) {
     let tm = lw.match(/^(\d{1,2})(?:[:.](\d{2}))?(am|pm)$/);
     if (!tm && /^\d{1,2}([:.]\d{2})?$/.test(lw) && /^(am|pm|a\.m\.?|p\.m\.?)$/.test(nx)) { const [h, m] = lw.split(/[:.]/); tm = [lw, h, m, nx.startsWith("p") ? "pm" : "am"]; take(i + 1); }
     if (!tm) tm = lw.match(/^(\d{1,2}):(\d{2})$/) || (lws[i - 1] === "at" && lw.match(/^(\d{1,2})\.(\d{2})$/));
+    if (!tm && /^\d{1,2}$/.test(lw) && +lw >= 1 && +lw <= 12 && (lws[i - 1] === "at" || (i > 0 && used.has(i - 1) && out.due_date && !out.due_time)) && monthIdx(nx) < 0 && !/^(min|mins|minutes?|hrs?|hours?|days?|weeks?|st|nd|rd|th)$/.test(nx)) { const h = +lw; tm = [lw, h <= 7 ? h + 12 : h, 0, ""]; }
     if (tm) { let h = +tm[1], m = +(tm[2] || 0); if (tm[3] === "pm" && h < 12) h += 12; if (tm[3] === "am" && h === 12) h = 0; if (setTime(h, m)) { take(i); continue; } }
     // weekdays: fri, friday, next friday
     const di = DOW.findIndex(d => lw === d || lw === d + "day" || (d === "tue" && (lw === "tuesday" || lw === "tues")) || (d === "wed" && lw === "wednesday") || (d === "thu" && (lw === "thursday" || lw === "thurs")) || (d === "sat" && lw === "saturday"));
     if (di >= 0) { let n = (di - today.getDay() + 7) % 7; if (n === 0) n = 7; out.due_date = dkey(addDays(today, n)); take(i); continue; }
     // dates: 25/11, 25-11, 25 nov, nov 25, 25th november
+    let fy = lw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/); const iso = lw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); if (iso) fy = [lw, iso[3], iso[2], iso[1]];
+    if (fy) { const y = +fy[3] < 100 ? 2000 + +fy[3] : +fy[3], d = new Date(y, +fy[2] - 1, +fy[1]); if (d.getMonth() === +fy[2] - 1) { out.due_date = dkey(d); take(i); continue; } }
     const m = lw.match(/^(\d{1,2})[\/\-.](\d{1,2})$/);
     if (m) { const d = dateFromDM(+m[1], +m[2] - 1, today); if (d) { out.due_date = d; take(i); continue; } }
     const dn = lw.match(/^(\d{1,2})(st|nd|rd|th)?$/);
-    if (dn && monthIdx(nx) >= 0) { const d = dateFromDM(+dn[1], monthIdx(nx), today); if (d) { out.due_date = d; take(i, i + 1); continue; } }
-    if (monthIdx(lw) >= 0) { const d2 = nx.match(/^(\d{1,2})(st|nd|rd|th)?$/); if (d2) { const d = dateFromDM(+d2[1], monthIdx(lw), today); if (d) { out.due_date = d; take(i, i + 1); continue; } } }
+    if (dn && monthIdx(nx) >= 0) { const d = dateFromDM(+dn[1], monthIdx(nx), today); if (d) { out.due_date = withYear(d, lws[i + 2], i + 2); take(i, i + 1); continue; } }
+    if (dn && (dn[2] || lws[i - 1] === "on") && +dn[1] >= 1 && +dn[1] <= 31 && !out.due_date) { let d = new Date(today.getFullYear(), today.getMonth(), +dn[1]); if (d.getDate() !== +dn[1] || d < parseKey(dkey(today))) { d = new Date(today.getFullYear(), today.getMonth() + 1, +dn[1]); } if (d.getDate() === +dn[1]) { out.due_date = dkey(d); take(i); continue; } }
+    if (monthIdx(lw) >= 0) { const d2 = nx.match(/^(\d{1,2})(st|nd|rd|th)?$/); if (d2) { const d = dateFromDM(+d2[1], monthIdx(lw), today); if (d) { out.due_date = withYear(d, lws[i + 2], i + 2); take(i, i + 1); continue; } } }
   }
+  // a time with no day that has already passed today ("at 9" said at 11 pm) means tomorrow
+  if (autoDay && out.due_date === dkey(today) && out.due_time) { const [h, m] = out.due_time.split(":").map(Number); if (h * 60 + m <= today.getHours() * 60 + today.getMinutes()) out.due_date = dkey(addDays(today, 1)); }
   // drop little linking words that only introduced a date or time ("on", "at", "by"...)
   const keep = words.filter((w, i) => { if (used.has(i)) return false; if (FILLER.has(lws[i])) { let j = i + 1; while (j < words.length && FILLER.has(lws[j]) && !used.has(j)) j++; if (j >= words.length || used.has(j)) return false; } return true; });
   // tidy the title: drop "remind me ... regarding", "about", leftover "priority", and similar wrappers
   const LEAD = /^(please|pls|kindly|remind|reminder|reminders|reminder:|me|to|about|abt|for|of|re|re:|reg|set|a|an|alert|the|at|on|that|i|need|have|has)$/i;
   const REG = /^r[ae]{1,2}g\w{0,6}d(ing|in|ng|g)?:?$/i;  // regarding, regardin, ragerdin, regrading…
   let tw = keep.slice();
-  if (out.remind_before === 0 || REG.test(tw[0] || "")) { while (tw.length > 1 && (LEAD.test(tw[0]) || REG.test(tw[0]))) tw.shift(); }
+  if (out.remind_before === 0 || REG.test(tw[0] || "")) { while (tw.length && (LEAD.test(tw[0]) || REG.test(tw[0]))) tw.shift(); if (!tw.length) tw = ["Reminder"]; }
   tw = tw.filter((w, i) => !(/^(priority|prio)$/i.test(w)));
   out.title = tw.join(" ").replace(/^[\s,;:-]+|[\s,;:-]+$/g, "");
   if (out.title) out.title = out.title.charAt(0).toUpperCase() + out.title.slice(1);
