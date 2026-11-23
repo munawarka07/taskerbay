@@ -57,6 +57,30 @@ export async function postUpdate(task, body, kind = "comment", extra = {}) {
   return u;
 }
 
+// A status update that can also move the task to a new date/time and stage.
+// The latest note shows on the task everywhere; each update is kept as a timeline entry.
+export async function statusUpdate(task, { note = "", due_date, due_time, stage } = {}) {
+  const cur = S.db.tasks.find(x => x.id === task.id) || task;
+  const hm = v => (v ? String(v).slice(0, 5) : null);
+  const patch = {};
+  const dateMoved = due_date !== undefined && (due_date || null) !== (cur.due_date || null);
+  const timeMoved = due_time !== undefined && hm(due_time) !== hm(cur.due_time);
+  if (dateMoved) patch.due_date = due_date || null;
+  if (timeMoved) patch.due_time = due_time || null;
+  note = (note || "").trim().slice(0, 500);
+  if (note) { patch.status_note = note; patch.status_at = new Date().toISOString(); }
+  if (stage && stage !== cur.stage) patch.stage = stage;
+  if (!Object.keys(patch).length) return null;
+  const after = await changeTask(cur, patch);
+  if (note || dateMoved || timeMoved) {
+    await postUpdate(after, note || "Rescheduled", "comment", {
+      new_due_date: dateMoved ? patch.due_date : null,
+      new_due_time: timeMoved ? patch.due_time : null
+    });
+  }
+  return after;
+}
+
 /* ---------- Create / change / delete ---------- */
 let posSeq = 0;
 export async function createTask(fields, depth = 0) {

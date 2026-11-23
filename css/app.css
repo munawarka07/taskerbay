@@ -472,6 +472,19 @@ button.stage-chip.on::before{background:#fff}
 .upd.sys i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--muted));flex:none}
 .post{display:flex;gap:8px;margin-top:10px}
 .post textarea{flex:1;min-height:44px;resize:vertical}
+.status-form{display:block;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}
+.status-form textarea{width:100%;min-height:58px}
+.status-form .upd-grid{grid-template-columns:1fr 1fr 1fr;margin:10px 0}
+.status-form .btn{width:100%}
+@media (max-width:520px){.status-form .upd-grid{grid-template-columns:1fr 1fr}.status-form .upd-grid .field:last-child{grid-column:1/-1}}
+.status-now{margin:8px 0 4px;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--accent) 9%,transparent);border:1px solid color-mix(in srgb,var(--accent) 25%,transparent)}
+.status-now .lab{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}
+.status-now p{margin:3px 0 2px;font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere}
+.status-now small{color:var(--muted);font-weight:600;font-size:12px}
+.upd .bubble .next{display:inline-block;margin-top:5px;font-style:normal;font-size:12px;font-weight:800;color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);padding:2px 8px;border-radius:99px}
+.st-note{font-size:12.5px;color:var(--muted);font-weight:600;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.st-note small{font-weight:600;opacity:.8}
+.qa-hint .upd-chip{color:var(--accent);font-weight:800}
 /* Board */
 .board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,1fr);gap:12px;overflow-x:auto;padding-bottom:10px;scroll-snap-type:x mandatory}
 .col{background:var(--surface-2);border:1px solid var(--line);border-radius:18px;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:180px;scroll-snap-align:start;transition:background .2s,border-color .2s}
@@ -588,3 +601,12 @@ main{min-width:0}
 .upd.sys{display:grid;grid-template-columns:8px 1fr;align-items:baseline}
 .upd.sys i{transform:translateY(-1px)}
 .demo-tag{white-space:nowrap}
+
+/* Popup notifications banner */
+.push-banner{display:flex;align-items:center;gap:12px;padding:12px 14px;margin:0 0 14px;border-radius:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 14%,var(--surface)),var(--surface));border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);animation:rise .4s ease both}
+.push-banner .ic{font-size:22px}
+.push-banner div{flex:1;min-width:0}
+.push-banner b{display:block;font-size:14px}
+.push-banner small{display:block;color:var(--muted);font-weight:600;font-size:12.5px;margin-top:2px}
+.push-banner .btn{flex:none;padding:8px 14px}
+.push-banner .x{flex:none;background:none;border:0;color:var(--muted);font-size:15px;cursor:pointer;padding:6px}

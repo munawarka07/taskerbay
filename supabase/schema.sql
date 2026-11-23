@@ -419,3 +419,37 @@ begin
     execute format('grant select, insert, update, delete on public.%I to authenticated', t);
   end loop;
 end $$;
+
+-- =====================================================================
+-- v2 additions (Nov 2026): status timeline, popup notifications, access code
+-- =====================================================================
+alter table public.tasks add column if not exists status_note text not null default '';
+alter table public.tasks add column if not exists status_at timestamptz;
+alter table public.tasks add column if not exists reminded_at timestamptz;
+alter table public.task_updates add column if not exists new_due_date date;
+alter table public.task_updates add column if not exists new_due_time time;
+create or replace function public.reset_task_reminder() returns trigger language plpgsql set search_path = '' as $$
+begin
+  if new.due_date is distinct from old.due_date or new.due_time is distinct from old.due_time then new.reminded_at := null; end if;
+  return new;
+end $$;
+drop trigger if exists tasks_reset_reminder on public.tasks;
+create trigger tasks_reset_reminder before update on public.tasks for each row execute function public.reset_task_reminder();
+
+alter table public.profiles add column if not exists last_digest_on date;
+alter table public.routine_items add column if not exists last_reminded_on date;
+alter table public.notifications add column if not exists pushed_at timestamptz;
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade default auth.uid(),
+  endpoint text not null unique, p256dh text not null, auth text not null,
+  user_agent text not null default '', created_at timestamptz not null default now()
+);
+alter table public.push_subscriptions enable row level security;
+-- policies: each person can only see/add/change/remove their own devices (see live database)
+
+-- Private settings (never exposed to the website): VAPID keys, cron secret, sign-up access code (hashed).
+-- private.push_config(vapid_public, vapid_private, cron_secret), private.signup_code(code_hash)
+-- public.push_config() is callable by service_role only. auth.users has a BEFORE INSERT trigger
+-- (private.require_signup_code) that rejects sign-ups without the right access code.
+-- pg_cron job 'taskerbay-push' calls the Edge Function supabase/functions/push every 5 minutes.

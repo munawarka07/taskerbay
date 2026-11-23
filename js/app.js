@@ -1,7 +1,7 @@
 // TaskerBay app: screens, interactions and animations.
 import { S, api, initBackend, onChange, onError, emit, insert, upsert, update, remove, uuid, localUpsert } from "./store.js";
 import * as E from "./engine.js";
-import { ENABLE_GOOGLE, ENABLE_AI, CURRENCY } from "./config.js";
+import { ENABLE_GOOGLE, ENABLE_AI, CURRENCY, VAPID_PUBLIC_KEY } from "./config.js";
 
 const { dkey, parseKey, addDays } = E;
 /* ================= Helpers ================= */
@@ -60,34 +60,105 @@ function sortTasks(a, b) {
   return a.position - b.position;
 }
 
-/* Quick add: "Send payslips tomorrow 3pm #work !high @sara *" */
+/* Quick add: "Send payslips tomorrow 3pm #work !high @sara *"
+   Also understands plain sentences: "call bank on 25 nov at 3 pm", "in 2 days", "next week", "noon". */
+const FILLER = new Set(["on", "at", "by", "due", "for", "to", "until", "till", "before", "from", "this", "next", "the", "of"]);
+const MONTH_N = { jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11 };
+const monthIdx = w => MONTH_N[w] ?? -1;
+function dateFromDM(dd, mm, today) { if (dd < 1 || dd > 31 || mm < 0 || mm > 11) return null; let d = new Date(today.getFullYear(), mm, dd); if (d < parseKey(dkey(today))) d = new Date(today.getFullYear() + 1, mm, dd); return dkey(d); }
 function parseQuick(text) {
   const out = { title: "", area: S.db.workspace_members.length > 1 ? "Work" : "Personal", priority: "Medium", due_date: null, due_time: null, starred: false, repeat: "", assignee_id: me() };
-  const words = text.trim().split(/\s+/); const keep = []; const today = new Date();
+  const words = text.trim().split(/\s+/).filter(Boolean); const used = new Set(); const today = new Date();
+  const lws = words.map(w => w.toLowerCase().replace(/[,.;!?]+$/, ""));
+  const setTime = (h, m) => { if (h < 24 && m < 60) { out.due_time = `${pad(h)}:${pad(m)}`; if (!out.due_date) out.due_date = dkey(today); return true; } return false; };
   for (let i = 0; i < words.length; i++) {
-    const w = words[i], lw = w.toLowerCase();
-    if (/^#w(ork)?$/.test(lw)) { out.area = "Work"; continue; }
-    if (/^#p(ersonal)?$/.test(lw)) { out.area = "Personal"; continue; }
-    if (/^#proj(ect|ects)?$/.test(lw)) { out.area = "Projects"; continue; }
-    if (/^!(h|high|1)$/.test(lw)) { out.priority = "High"; continue; }
-    if (/^!(m|med|medium|2)$/.test(lw)) { out.priority = "Medium"; continue; }
-    if (/^!(l|low|3)$/.test(lw)) { out.priority = "Low"; continue; }
-    if (lw === "*" || lw === "⭐") { out.starred = true; continue; }
-    if (lw.startsWith("@") && lw.length > 1) { const p = S.db.profiles.find(p => p.full_name.toLowerCase().startsWith(lw.slice(1))); if (p) { out.assignee_id = p.id; continue; } }
-    if (/^(every|each)$/.test(lw) && /^(day|weekday|week|month)$/.test((words[i + 1] || "").toLowerCase())) { out.repeat = { day: "daily", weekday: "weekdays", week: "weekly", month: "monthly" }[words[i + 1].toLowerCase()]; i++; continue; }
-    if (lw === "today" || lw === "tod") { out.due_date = dkey(today); continue; }
-    if (lw === "tomorrow" || lw === "tmr" || lw === "tmrw") { out.due_date = dkey(addDays(today, 1)); continue; }
-    if (lw === "nextweek") { out.due_date = dkey(addDays(today, 7)); continue; }
-    const tm = lw.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/) || lw.match(/^(\d{1,2}):(\d{2})$/);
-    if (tm) { let h = +tm[1], m = +(tm[2] || 0); if (tm[3] === "pm" && h < 12) h += 12; if (tm[3] === "am" && h === 12) h = 0; if (h < 24 && m < 60) { out.due_time = `${pad(h)}:${pad(m)}`; if (!out.due_date) out.due_date = dkey(today); continue; } }
-    const di = DOW.findIndex(d => lw === d || lw === d + "day" || (d === "tue" && lw === "tuesday") || (d === "wed" && lw === "wednesday") || (d === "thu" && lw === "thursday") || (d === "sat" && lw === "saturday"));
-    if (di >= 0) { let n = (di - today.getDay() + 7) % 7; if (n === 0) n = 7; out.due_date = dkey(addDays(today, n)); continue; }
+    const w = words[i], lw = lws[i], nx = lws[i + 1] || "";
+    const take = (...idx) => idx.forEach(k => used.add(k));
+    if (/^#w(ork)?$/.test(lw)) { out.area = "Work"; take(i); continue; }
+    if (/^#p(ersonal)?$/.test(lw)) { out.area = "Personal"; take(i); continue; }
+    if (/^#proj(ect|ects)?$/.test(lw)) { out.area = "Projects"; take(i); continue; }
+    if (/^!(h|high|1)$/.test(lw) || (lw === "urgent")) { out.priority = "High"; take(i); continue; }
+    if (/^!(m|med|medium|2)$/.test(lw)) { out.priority = "Medium"; take(i); continue; }
+    if (/^!(l|low|3)$/.test(lw)) { out.priority = "Low"; take(i); continue; }
+    if (lw === "*" || lw === "⭐") { out.starred = true; take(i); continue; }
+    if (lw.startsWith("@") && lw.length > 1) { const p = S.db.profiles.find(p => p.full_name.toLowerCase().startsWith(lw.slice(1))); if (p) { out.assignee_id = p.id; take(i); continue; } }
+    if (/^(every|each)$/.test(lw) && /^(day|weekday|week|month)$/.test(nx)) { out.repeat = { day: "daily", weekday: "weekdays", week: "weekly", month: "monthly" }[nx]; take(i, i + 1); continue; }
+    if (lw === "daily") { out.repeat = "daily"; take(i); continue; }
+    if (lw === "today" || lw === "tod" || lw === "tonight") { out.due_date = dkey(today); if (lw === "tonight" && !out.due_time) out.due_time = "20:00"; take(i); continue; }
+    if (lw === "tomorrow" || lw === "tmr" || lw === "tmrw") { out.due_date = dkey(addDays(today, 1)); take(i); continue; }
+    if (lw === "nextweek" || (lw === "next" && nx === "week")) { out.due_date = dkey(addDays(today, 7)); take(i); if (lw === "next") take(i + 1); continue; }
+    if (lw === "in" && /^\d{1,3}$/.test(nx) && /^(day|days|week|weeks)$/.test(lws[i + 2] || "")) { const n = +nx * (lws[i + 2].startsWith("week") ? 7 : 1); out.due_date = dkey(addDays(today, n)); take(i, i + 1, i + 2); continue; }
+    if (lw === "noon" || lw === "midday") { setTime(12, 0); take(i); continue; }
+    const part = { morning: 9, afternoon: 14, evening: 18 }[lw];
+    if (part && (out.due_date || i > 0 && used.has(i - 1)) && !out.due_time) { setTime(part, 0); take(i); continue; }
+    // times: 3pm, 3:30pm, 15:00, "3 pm"
+    let tm = lw.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/) || lw.match(/^(\d{1,2}):(\d{2})$/);
+    if (!tm && /^\d{1,2}(:\d{2})?$/.test(lw) && /^(am|pm)$/.test(nx)) { const [h, m] = lw.split(":"); tm = [lw, h, m, nx]; take(i + 1); }
+    if (tm) { let h = +tm[1], m = +(tm[2] || 0); if (tm[3] === "pm" && h < 12) h += 12; if (tm[3] === "am" && h === 12) h = 0; if (setTime(h, m)) { take(i); continue; } }
+    // weekdays: fri, friday, next friday
+    const di = DOW.findIndex(d => lw === d || lw === d + "day" || (d === "tue" && (lw === "tuesday" || lw === "tues")) || (d === "wed" && lw === "wednesday") || (d === "thu" && (lw === "thursday" || lw === "thurs")) || (d === "sat" && lw === "saturday"));
+    if (di >= 0) { let n = (di - today.getDay() + 7) % 7; if (n === 0) n = 7; out.due_date = dkey(addDays(today, n)); take(i); continue; }
+    // dates: 25/11, 25-11, 25 nov, nov 25, 25th november
     const m = lw.match(/^(\d{1,2})[\/\-.](\d{1,2})$/);
-    if (m) { const dd = +m[1], mm = +m[2]; if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) { let d = new Date(today.getFullYear(), mm - 1, dd); if (d < parseKey(dkey(today))) d = new Date(today.getFullYear() + 1, mm - 1, dd); out.due_date = dkey(d); continue; } }
-    keep.push(w);
+    if (m) { const d = dateFromDM(+m[1], +m[2] - 1, today); if (d) { out.due_date = d; take(i); continue; } }
+    const dn = lw.match(/^(\d{1,2})(st|nd|rd|th)?$/);
+    if (dn && monthIdx(nx) >= 0) { const d = dateFromDM(+dn[1], monthIdx(nx), today); if (d) { out.due_date = d; take(i, i + 1); continue; } }
+    if (monthIdx(lw) >= 0) { const d2 = nx.match(/^(\d{1,2})(st|nd|rd|th)?$/); if (d2) { const d = dateFromDM(+d2[1], monthIdx(lw), today); if (d) { out.due_date = d; take(i, i + 1); continue; } } }
   }
-  out.title = keep.join(" ");
+  // drop little linking words that only introduced a date or time ("on", "at", "by"...)
+  const keep = words.filter((w, i) => { if (used.has(i)) return false; if (FILLER.has(lws[i])) { let j = i + 1; while (j < words.length && FILLER.has(lws[j]) && !used.has(j)) j++; if (j >= words.length || used.has(j)) return false; } return true; });
+  out.title = keep.join(" ").replace(/[\s,;:-]+$/, "");
   return out;
+}
+
+/* Smart reader: decides whether a sentence is a NEW task or an UPDATE to an existing one.
+   "mark payroll report done", "salary sheet waiting for approval from finance",
+   "move visa renewal to thursday 3pm", "payroll: sent to bank, follow up tomorrow" */
+const STOP = new Set(["the", "a", "an", "and", "or", "to", "for", "of", "on", "at", "by", "in", "with", "my", "is", "it", "its", "this", "that", "task", "please", "now", "be", "has", "have", "was", "are", "from", "as"]);
+const STATUS_RX = [
+  ["done", /\b(mark(ed)? (as )?done|done|completed?|finished|closed|resolved|sorted|submitted|delivered|paid|approved)\b/],
+  ["wait", /\b(waiting|on hold|pending|blocked|awaiting|stuck|hold)\b/],
+  ["active", /\b(in progress|started|starting|working on|ongoing|underway|doing)\b/],
+  ["todo", /\b(reopen(ed)?|not started|back to (to ?do|todo))\b/]
+];
+const UPDATE_VERB = /^(mark|set|move|update|change|reschedule|postpone|push|shift|complete|finish|close|start|reopen|status)\b/;
+const words3 = s => s.toLowerCase().replace(/[^a-z0-9؀-ۿ\s]/g, " ").split(/\s+/).filter(w => w.length > 1 && !STOP.has(w));
+function stageFor(t, kind) {
+  const st = E.stagesOf(t);
+  if (kind === "done") return E.doneStage(E.workflowOf(t));
+  if (kind === "todo") return st[0].key;
+  if (kind === "wait") return (st.find(s => /wait|hold|block|pend|review|approv/i.test(s.name) && s.type !== "done") || st.find(s => s.type === "active") || st[0]).key;
+  return (st.find(s => s.type === "active") || st[0]).key;
+}
+function parseIntent(text) {
+  const raw = text.trim(); if (!raw || raw.startsWith("+")) return null;
+  const low = raw.toLowerCase();
+  const vm = low.match(UPDATE_VERB), verb = !!vm;
+  const kind = STATUS_RX.find(([, rx]) => rx.test(low))?.[0] || ({ complete: "done", finish: "done", close: "done", start: "active", reopen: "todo" }[vm?.[1]]) || null;
+  const q = parseQuick(raw);
+  const moving = verb && (q.due_date || q.due_time);
+  if (!kind && !verb && !/[:–—]| - /.test(raw)) return null;
+  // find the existing task the sentence talks about
+  const sw = new Set(words3(raw));
+  let best = null;
+  for (const t of S.db.tasks) {
+    const tw = [...new Set(words3(t.title))]; if (!tw.length) continue;
+    const hit = tw.filter(w => sw.has(w) || [...sw].some(x => x.length > 4 && (x.startsWith(w) || w.startsWith(x)))).length;
+    if (!hit) continue;
+    const score = hit / tw.length + (E.isDone(t) ? -0.2 : 0) + (t.parent_id ? -0.05 : 0);
+    if ((score >= 0.6 || hit >= 2) && (!best || score > best.score || (score === best.score && (hit > best.hit || (hit === best.hit && (t.updated_at || t.created_at || "") > (best.t.updated_at || best.t.created_at || "")))))) best = { t, score, hit };
+  }
+  if (!best) return null;
+  if (!kind && !moving && !/[:–—]| - /.test(raw)) return null;
+  const t = best.t;
+  // the note: after ":" / " - ", or from the status phrase on (for waiting / in-progress updates)
+  let note = "";
+  const sep = raw.match(/[:–—]\s*(.+)$|\s-\s(.+)$/);
+  if (sep) note = (sep[1] || sep[2]).trim();
+  else if (kind === "wait" || kind === "active") { const m = low.match(STATUS_RX.find(([k]) => k === kind)[1]); if (m) note = raw.slice(m.index); }
+  if (note) { const nq = parseQuick(note); if (nq.title) note = nq.title; note = note.charAt(0).toUpperCase() + note.slice(1); }
+  const stage = kind ? stageFor(t, kind) : undefined;
+  return { type: "update", task: t, stage, note, due_date: q.due_date || undefined, due_time: q.due_time || undefined };
 }
 
 /* ================= Feedback: toast, confetti, ripple, count-up ================= */
@@ -233,7 +304,7 @@ function go(view, opts = {}) {
   if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   render(true); scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
 }
-addEventListener("hashchange", () => { const v = location.hash.slice(1); if (v && v !== U.view && VIEWS[v]) go(v); });
+addEventListener("hashchange", () => { if (S.ready && openFromHash()) return; const v = location.hash.slice(1); if (v && v !== U.view && VIEWS[v]) go(v); });
 let afterFns = [];
 const after = fn => afterFns.push(fn);
 function afterRender(animate) {
@@ -262,7 +333,7 @@ function taskRow(t, opts = {}) {
   if (t.parent_id && opts.showParent) { const p = task(t.parent_id); if (p) chips.push(`<span class="chip">↳ ${esc(p.title).slice(0, 24)}</span>`); }
   return `<div class="row ${done ? "done" : ""}" style="--p:${PRI_C[t.priority]}" data-id="${t.id}" data-swipe="1">
     <button class="check" data-action="toggle" data-id="${t.id}" aria-label="${done ? "Reopen" : "Complete"}: ${esc(t.title)}">${I.check}</button>
-    <div class="main" data-action="open-task" data-id="${t.id}" role="button" tabindex="0"><div class="t">${esc(t.title)}</div><div class="meta">${chips.join("")}</div></div>
+    <div class="main" data-action="open-task" data-id="${t.id}" role="button" tabindex="0"><div class="t">${esc(t.title)}</div>${t.status_note && !done ? `<div class="st-note" title="Latest status">💬 ${esc(t.status_note)}${t.status_at ? ` <small>· ${timeAgo(t.status_at)}</small>` : ""}</div>` : ""}<div class="meta">${chips.join("")}</div></div>
     ${isTeam() && t.assignee_id ? avatar(t.assignee_id) : ""}
     <button class="star ${t.starred ? "on" : ""}" data-action="star" data-id="${t.id}" aria-label="${t.starred ? "Unstar" : "Star for today"}">${I.star}</button>
   </div>`;
@@ -272,8 +343,13 @@ function quickAdd(id, placeholder) {
   <div class="qa-hint" data-hint-for="${id}">${hintFor("")}</div>`;
 }
 function hintFor(v) {
-  if (!v.trim()) return `<span>Shortcuts:</span><code>today</code><code>fri</code><code>3pm</code><code>#work</code><code>!high</code>${isTeam() ? "<code>@name</code>" : ""}<code>*</code><code>every week</code>`;
-  const p = parseQuick(v), fake = { ...p, stage: "todo" };
+  if (!v.trim()) return `<span>Shortcuts:</span><code>today</code><code>fri</code><code>3pm</code><code>#work</code><code>!high</code>${isTeam() ? "<code>@name</code>" : ""}<code>*</code><code>every week</code><span>· or update one:</span><code>payroll done</code><code>move visa to thu 3pm</code>`;
+  const it = parseIntent(v);
+  if (it) {
+    const st = it.stage ? E.stagesOf(it.task).find(s => s.key === it.stage) : null, fake = { ...it.task, due_date: it.due_date ?? it.task.due_date, due_time: it.due_time ?? it.task.due_time };
+    return `<span>Will update:</span><span class="chip upd-chip">${esc(it.task.title.slice(0, 40))}</span>${st ? `<span class="chip" style="color:${st.color}">→ ${esc(st.name)}</span>` : ""}${it.due_date || it.due_time ? `<span class="chip ${E.dueStatus({ ...fake, stage: "todo" })}">${esc(dueLabel(fake))}</span>` : ""}${it.note ? `<span class="chip">💬 ${esc(it.note.slice(0, 40))}</span>` : ""}<span class="muted" style="font-size:11.5px">Start with <b>+</b> to add as a new task instead</span>`;
+  }
+  const p = parseQuick(v.replace(/^\+\s*/, "")), fake = { ...p, stage: "todo" };
   return `<span>Will add:</span>${p.due_date ? `<span class="chip ${E.dueStatus(fake)}">${esc(dueLabel(fake))}</span>` : `<span class="chip">No date</span>`}<span class="chip dot" style="--c:${AREA_C[p.area]}">${p.area}</span><span class="chip" style="color:${PRI_C[p.priority]}">${p.priority}</span>${p.assignee_id !== me() ? `<span class="chip">→ ${esc(nameOf(p.assignee_id))}</span>` : ""}${p.starred ? `<span class="chip today">⭐</span>` : ""}${p.repeat ? `<span class="chip">${I.repeat} ${p.repeat}</span>` : ""}`;
 }
 function ring(pct, size = 118, stroke = 11, id = "") {
@@ -331,7 +407,7 @@ function vToday(animate) {
   const first = (profile(me())?.full_name || "").split(" ")[0];
   const msg = !ids.size ? "Nothing due today. Star a task to make today count." : pct === 1 ? "Everything due today is done. Brilliant work." : `${ids.size - doneIds.size} left for today. You've got this.`;
   return `
-  <div class="hello"><div><h1>${greeting()}${first && first !== "You" ? `, <em>${esc(first)}</em>` : ""}</h1><p>${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })} · ${esc(ws()?.name || "")}</p></div></div>
+  ${pushBanner()}<div class="hello"><div><h1>${greeting()}${first && first !== "You" ? `, <em>${esc(first)}</em>` : ""}</h1><p>${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })} · ${esc(ws()?.name || "")}</p></div></div>
   <div class="grid g-hero">
     <div class="card hero">
       <div class="ring">${ring(animate ? 0 : pct)}<div class="lbl"><div><b class="num">${Math.round(pct * 100)}%</b><small>${doneIds.size} of ${ids.size} today</small></div></div></div>
@@ -447,7 +523,7 @@ function vTasks() {
     const inWf = top.filter(t => (t.workflow_id || E.defaultWorkflow()?.id) === U.boardWf && (!E.isDone(t) || (t.completed_at && Date.now() - new Date(t.completed_at) < 14 * 864e5)));
     body = `<div class="filters">${wfs.map(w => `<button class="fchip ${w.id === U.boardWf ? "on" : ""}" data-action="board-wf" data-v="${w.id}">${esc(w.icon)} ${esc(w.name)}</button>`).join("")}</div>
     <div class="board">${(wf?.stages || []).map(s => { const cards = inWf.filter(t => (E.stagesOf(t).some(x => x.key === t.stage) ? t.stage : E.stagesOf(t)[0].key) === s.key).sort(sortTasks); return `<div class="col" data-drop-stage="${esc(s.key)}"><div class="col-h"><i style="--c:${s.color}"></i>${esc(s.name)}<b class="num">${cards.length}</b></div>
-      ${cards.map(t => { const pg = E.progressOf(t.id); return `<div class="card-t" draggable="true" data-drag-task="${t.id}" data-action="open-task" data-id="${t.id}" style="--p:${PRI_C[t.priority]}"><div class="t">${t.starred ? "⭐ " : ""}${esc(t.title)}</div><div class="meta">${t.due_date ? `<span class="chip ${E.dueStatus(t)}">${esc(dueLabel(t))}</span>` : ""}${pg ? `<span class="chip subbar">${pg.done}/${pg.total}<span><i style="width:${pg.pct * 100}%"></i></span></span>` : ""}${isTeam() && t.assignee_id ? avatar(t.assignee_id) : ""}</div></div>`; }).join("")}
+      ${cards.map(t => { const pg = E.progressOf(t.id); return `<div class="card-t" draggable="true" data-drag-task="${t.id}" data-action="open-task" data-id="${t.id}" style="--p:${PRI_C[t.priority]}"><div class="t">${t.starred ? "⭐ " : ""}${esc(t.title)}</div>${t.status_note && !E.isDone(t) ? `<div class="st-note">💬 ${esc(t.status_note)}</div>` : ""}<div class="meta">${t.due_date ? `<span class="chip ${E.dueStatus(t)}">${esc(dueLabel(t))}</span>` : ""}${pg ? `<span class="chip subbar">${pg.done}/${pg.total}<span><i style="width:${pg.pct * 100}%"></i></span></span>` : ""}${isTeam() && t.assignee_id ? avatar(t.assignee_id) : ""}</div></div>`; }).join("")}
       <button class="add-card" data-action="new-task" data-wf="${wf.id}" data-stage="${esc(s.key)}">＋ Add card</button></div>`; }).join("")}</div>
     <p class="swipe-hint">Drag cards between columns on a computer. On a phone, open a card and tap a stage.</p>`;
   } else if (!list.length) {
@@ -509,6 +585,9 @@ function refreshTaskSheet(first) {
   if (!host) return;
   if (!t) { closeSheet(); return; }
   const keep = {}; ["tf-title", "tf-notes", "upd-text", "step-new"].forEach(id => { const n = $("#" + id); if (n) keep[id] = n.value; });
+  // keep the status form's date/time/stage only if the person changed them, so they never go stale
+  ["upd-date", "upd-time"].forEach(id => { const n = $("#" + id); if (n && n.value !== n.defaultValue) keep[id] = n.value; });
+  { const n = $("#upd-stage"); if (n && !n.options[n.selectedIndex]?.defaultSelected) keep["upd-stage"] = n.value; }
   const sub = {}; $$("[data-sub-input]").forEach(n => { if (n.value) sub[n.dataset.subInput] = n.value; });
   const aeId = document.activeElement?.id || (document.activeElement?.dataset?.subInput ? "sub:" + document.activeElement.dataset.subInput : null);
   const path = E.pathOf(t), wf = E.workflowOf(t), pg = E.progressOf(t.id);
@@ -542,9 +621,18 @@ function refreshTaskSheet(first) {
       <p class="muted" style="font-size:12px;margin:8px 2px 0">Steps can have their own steps, as many levels deep as you need. Tap a step to give it a date, owner or notes.</p>
     </div>
     <div class="card" style="padding:14px;box-shadow:none;margin-top:12px">
-      <div class="card-h" style="margin-bottom:4px"><h2>Updates & activity</h2><span class="sub">${ups.length}</span></div>
-      <div class="activity">${ups.length ? ups.map(u => u.kind === "comment" ? `<div class="upd">${avatar(u.author_id, true)}<div class="bubble"><b>${esc(nameOf(u.author_id))}</b><small>${timeAgo(u.created_at)}</small><p>${esc(u.body)}</p></div></div>` : `<div class="upd sys"><i style="--c:${u.to_stage ? (E.stagesOf(t).find(s => s.key === u.to_stage)?.color || "var(--muted)") : "var(--muted)"}"></i><span>${esc(u.body)} · ${timeAgo(u.created_at)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:13px">No updates yet. Post a status update for everyone working on this.</p>`}</div>
-      <div class="post"><label for="upd-text" class="sr">Status update</label><textarea class="inp" id="upd-text" placeholder="Post a status update…"></textarea><button class="btn" data-action="post-update">Post</button></div>
+      <div class="card-h" style="margin-bottom:4px"><h2>Status & timeline</h2><span class="sub">${ups.length}</span></div>
+      ${t.status_note ? `<div class="status-now"><span class="lab">Current status</span><p>${esc(t.status_note)}</p><small>${t.status_at ? timeAgo(t.status_at) : ""}${t.due_date ? ` · next: ${esc(dueLabel(t))}` : ""}</small></div>` : ""}
+      <div class="activity">${ups.length ? ups.map(u => u.kind === "comment" ? `<div class="upd">${avatar(u.author_id, true)}<div class="bubble"><b>${esc(nameOf(u.author_id))}</b><small>${timeAgo(u.created_at)}</small><p>${esc(u.body)}</p>${u.new_due_date || u.new_due_time ? `<em class="next">→ Next: ${esc(dueLabel({ due_date: u.new_due_date || t.due_date, due_time: u.new_due_time || (u.new_due_date ? null : t.due_time) }))}</em>` : ""}</div></div>` : `<div class="upd sys"><i style="--c:${u.to_stage ? (E.stagesOf(t).find(s => s.key === u.to_stage)?.color || "var(--muted)") : "var(--muted)"}"></i><span>${esc(u.body)} · ${timeAgo(u.created_at)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:13px">No updates yet. Add the latest status below. You can move the date and time at the same time, and every update stays here as a timeline.</p>`}</div>
+      <div class="post status-form">
+        <label for="upd-text" class="sr">Status update</label><textarea class="inp" id="upd-text" placeholder="What's the latest? e.g. Sent to HR, waiting for approval"></textarea>
+        <div class="fgrid upd-grid">
+          <div class="field"><label for="upd-date">Next date</label><input class="inp" type="date" id="upd-date" value="${t.due_date || ""}"></div>
+          <div class="field"><label for="upd-time">Time</label><input class="inp" type="time" id="upd-time" value="${fmtTime(t.due_time)}"></div>
+          <div class="field"><label for="upd-stage">Stage</label><select class="inp" id="upd-stage">${E.stagesOf(t).map(s => `<option value="${esc(s.key)}" ${s.key === E.stageOf(t).key ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>
+        </div>
+        <button class="btn" data-action="post-update">Save update</button>
+      </div>
     </div>
     <div class="sheet-actions" style="margin-top:14px"><button class="btn danger" data-action="delete-task" data-id="${t.id}">Delete</button>${!E.isDone(t) ? `<button class="btn ghost" data-action="focus-task" data-id="${t.id}">⏱ Focus</button>` : ""}<button class="btn" data-action="close-sheet">Done</button></div>
     <p class="muted" style="font-size:11.5px;text-align:center;margin:10px 0 0">Created ${timeAgo(t.created_at)} by ${esc(nameOf(t.created_by))}${t.completed_at ? ` · finished ${timeAgo(t.completed_at)}` : ""}</p>`;
@@ -838,6 +926,7 @@ function vSettings() {
   <div class="grid g-2">
     <div class="card"><div class="card-h"><h2>Profile</h2></div>
       <form data-form="profile"><div class="field"><label for="pf-name">Your name</label><input class="inp" id="pf-name" value="${esc(p.full_name || "")}"></div><button class="btn" type="submit">Save</button></form></div>
+    ${pushCard()}
     <div class="card"><div class="card-h"><h2>Appearance</h2></div><div class="seg">${THEMES.map(t => `<button class="${theme === t ? "on" : ""}" data-action="set-theme" data-v="${t}">${t === "auto" ? "Auto" : t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div></div>
     <div class="card"><div class="card-h"><h2>Install on your phone</h2></div><ol class="muted" style="margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px">
       <li><b>iPhone:</b> open this page in Safari → Share → <b>Add to Home Screen</b>.</li><li><b>Android:</b> open in Chrome → ⋮ menu → <b>Install app</b>.</li><li>Sign in with the same account on every device. Everything syncs live.</li></ol>
@@ -1061,7 +1150,14 @@ document.addEventListener("click", async e => {
     case "set-stage": { const tt = task(U.sheet?.id); if (tt && tt.stage !== a.dataset.v) { await E.changeTask(tt, { stage: a.dataset.v }); if (E.isDone(task(tt.id))) { const r = a.getBoundingClientRect(); burst(r.left + r.width / 2, r.top); } buzz(10); } break; }
     case "expand": U.expanded.has(id) ? U.expanded.delete(id) : U.expanded.add(id); refreshTaskSheet(); if (U.expanded.has(id)) setTimeout(() => $(`[data-sub-input="${id}"]`)?.focus(), 30); break;
     case "add-sub": U.expanded.add(id); refreshTaskSheet(); setTimeout(() => $(`[data-sub-input="${id}"]`)?.focus(), 30); break;
-    case "post-update": { const tt = task(U.sheet?.id), v = $("#upd-text").value.trim(); if (tt && v) { $("#upd-text").value = ""; await E.postUpdate(tt, v); buzz(10); } break; }
+    case "post-update": {
+      const tt = task(U.sheet?.id); if (!tt) break;
+      const note = $("#upd-text").value.trim(), d = $("#upd-date").value || null, tm = $("#upd-time").value || null, st = $("#upd-stage").value;
+      const res = await E.statusUpdate(tt, { note, due_date: d, due_time: tm, stage: st });
+      if (!res) { toast("Type a status or change the date, time or stage first."); break; }
+      $("#upd-text").value = ""; ["upd-date", "upd-time"].forEach(id => { const n = $("#" + id); if (n) n.defaultValue = n.value; });
+      buzz(10); toast(E.isDone(res) ? "Done! Update saved." : res.due_date ? `Update saved · next: ${dueLabel(res)}` : "Update saved."); break;
+    }
     case "delete-task": if (t) { closeSheet(); await deleteWithUndo(t); } break;
     case "focus-task": closeSheet(); FT.taskId = id; if (!FT.running) setMode("focus"); go("focus"); break;
     case "schedule": if (t) { await E.changeTask(t, { due_date: a.dataset.v }); toast("Scheduled."); } break;
@@ -1111,7 +1207,11 @@ document.addEventListener("click", async e => {
     case "export": { const data = JSON.stringify({ exported: new Date().toISOString(), workspace: ws(), ...S.db }, null, 2); navigator.clipboard?.writeText(data).then(() => toast("All your data is copied as JSON."), () => toast("Couldn't copy here.")); break; }
     case "demo-reset": localStorage.removeItem("taskerbay.demo.v1"); location.reload(); break;
     case "demo-fresh": { const ok = U.confirmFresh === true; if (!ok) { U.confirmFresh = true; toast("Tap again to erase everything on this device and start fresh."); setTimeout(() => U.confirmFresh = false, 4000); break; } await api.startFresh(profile(me())?.full_name !== "You" ? profile(me())?.full_name : "", true); break; }
-    case "sign-out": await api.signOut(); break;
+    case "sign-out": { try { const reg = await navigator.serviceWorker?.ready; const sub = await reg?.pushManager?.getSubscription(); if (sub) { await api.removePush(sub.endpoint); await sub.unsubscribe(); } } catch (e) {} await api.signOut(); break; }
+    case "push-on": await enablePush(); break;
+    case "push-test": { const r = await api.testPush().catch(e => ({ error: e.message })); toast(r?.sent ? `Test popup sent to ${r.sent} device${r.sent > 1 ? "s" : ""}.` : r?.error ? `Couldn't send: ${r.error}` : "No device is set up for popups yet."); break; }
+    case "push-off": { try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) { await api.removePush(sub.endpoint); await sub.unsubscribe(); } } catch (e) {} U.pushOn = false; try { localStorage.setItem("tb.pushOff", "1"); } catch (e) {} toast("Popups turned off on this device."); render(); break; }
+    case "push-banner-x": { try { localStorage.setItem("tb.pushBanner", "no"); } catch (e) {} render(); break; }
     case "ai-plan": aiPlan(); break;
     case "ai-plan-star": { const ids = (U.plan?.top3 || []).filter(task); for (const i of ids) { const tt = task(i); if (!tt.starred) await E.changeTask(tt, { starred: true }); } toast(`Starred ${ids.length} for today ⭐`); break; }
     case "ai-breakdown": aiBreakdown(); break;
@@ -1167,8 +1267,19 @@ document.addEventListener("keydown", async e => {
 document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind === "quick") {
-    const inp = $("input", f), p = parseQuick(inp.value); if (!p.title) { toast("Type what needs doing first."); return; }
-    inp.value = ""; const h = $(`[data-hint-for="${inp.id}"]`); if (h) h.innerHTML = hintFor("");
+    const inp = $("input", f), raw = inp.value, h = $(`[data-hint-for="${inp.id}"]`);
+    const it = parseIntent(raw);
+    if (it) {
+      inp.value = ""; if (h) h.innerHTML = hintFor("");
+      const res = await E.statusUpdate(it.task, { note: it.note, due_date: it.due_date, due_time: it.due_time, stage: it.stage });
+      buzz(15);
+      if (!res) toast(`“${it.task.title}” already looks like that.`);
+      else toast(`Updated “${it.task.title}”${E.isDone(res) ? " · done ✅" : ` · ${E.stageOf(res).name}`}${it.due_date || it.due_time ? ` · next: ${dueLabel(res)}` : ""}`, null);
+      if (res && E.isDone(res)) { const r = inp.getBoundingClientRect(); burst(r.left + r.width / 2, r.top); }
+      inp.focus(); return;
+    }
+    const p = parseQuick(raw.replace(/^\+\s*/, "")); if (!p.title) { toast("Type what needs doing first."); return; }
+    inp.value = ""; if (h) h.innerHTML = hintFor("");
     await E.createTask({ title: p.title, area: p.area, priority: p.priority, due_date: p.due_date, due_time: p.due_time, starred: p.starred, repeat: p.repeat, assignee_id: p.assignee_id });
     inp.focus(); buzz(15); toast("Task added.");
   }
@@ -1289,6 +1400,63 @@ let deferredInstall = null;
 addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; });
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+
+/* ================= Popup notifications (Web Push) ================= */
+const IS_IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const STANDALONE = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function pushState() {
+  if (S.mode !== "cloud" || !VAPID_PUBLIC_KEY) return "na";
+  if (!pushSupported()) return IS_IOS && !STANDALONE ? "ios-install" : "unsupported";
+  return Notification.permission === "granted" ? (U.pushOn ? "on" : "granted") : Notification.permission; // default | denied
+}
+const b64u = s => { const p = "=".repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+async function syncPush(quiet) {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUBLIC_KEY) });
+  const j = sub.toJSON();
+  await api.savePush({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, user_agent: navigator.userAgent.slice(0, 200) });
+  U.pushOn = true; if (!quiet) render();
+}
+async function enablePush() {
+  const st = pushState();
+  if (st === "ios-install") { toast("On iPhone, first add TaskerBay to your Home Screen (Share → Add to Home Screen), then open it from there."); return; }
+  if (st === "unsupported") { toast("This browser can't show popups. Try Chrome, Edge, Safari or Firefox."); return; }
+  if (st === "denied") { toast("Popups are blocked for taskerbay.com. Allow notifications in your browser's site settings, then try again."); return; }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("No problem. You can turn popups on any time in Settings."); render(); return; }
+    await syncPush(true); try { localStorage.removeItem("tb.pushOff"); } catch (e) {}
+    const r = await api.testPush().catch(() => null);
+    toast(r?.sent ? "Popups are on. A test popup is on its way." : "Popups are on.");
+    render();
+  } catch (e) { console.error(e); toast(`Couldn't turn on popups: ${e.message || e}`); }
+}
+function pushCard() {
+  const st = pushState(); if (st === "na") return "";
+  const body = {
+    on: `<p class="muted" style="margin:0 0 12px;font-size:14px">✅ On for this device. You'll get a <b>9 AM summary</b> (your local time), reminders <b>15 minutes before</b> tasks with a time, routine reminders, and team updates.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-action="push-test">Send a test popup</button><button class="btn ghost" data-action="push-off">Turn off on this device</button></div>`,
+    granted: `<p class="muted" style="margin:0 0 12px;font-size:14px">Popups are off on this device.</p><button class="btn" data-action="push-on">🔔 Turn on popups</button>`,
+    default: `<p class="muted" style="margin:0 0 12px;font-size:14px">Get a <b>9 AM summary</b> of your day, reminders before tasks are due, and team updates, even when TaskerBay is closed. Turn it on once on each device you use.</p><button class="btn" data-action="push-on">🔔 Turn on popups</button>`,
+    denied: `<p class="muted" style="margin:0;font-size:14px">Popups are blocked for this site. Open your browser's site settings for taskerbay.com, allow <b>Notifications</b>, then reload.</p>`,
+    "ios-install": `<p class="muted" style="margin:0;font-size:14px">On iPhone, popups work once TaskerBay is on your Home Screen: Safari → Share → <b>Add to Home Screen</b>, open it from there, then come back here.</p>`,
+    unsupported: `<p class="muted" style="margin:0;font-size:14px">This browser can't show popups. Chrome, Edge, Safari (iOS 16.4+) and Firefox all can.</p>`
+  }[st];
+  return `<div class="card"><div class="card-h"><h2>🔔 Popup notifications</h2></div>${body}</div>`;
+}
+function pushBanner() {
+  const st = pushState(); let hid = false; try { hid = localStorage.getItem("tb.pushBanner") === "no"; } catch (e) {}
+  if (hid || !["default", "ios-install"].includes(st)) return "";
+  return `<div class="push-banner"><span class="ic">🔔</span><div><b>Get your 9 AM summary and reminders</b><small>${st === "ios-install" ? "Add TaskerBay to your Home Screen first, then turn on popups." : "Popups arrive even when TaskerBay is closed."}</small></div>${st === "default" ? `<button class="btn" data-action="push-on">Turn on</button>` : ""}<button class="x" data-action="push-banner-x" aria-label="Dismiss">✕</button></div>`;
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data?.type === "open" && e.data.url) { const h = new URL(e.data.url).hash; if (h) { if (location.hash === h) openFromHash(); else location.hash = h; } } });
+function openFromHash() {
+  const h = location.hash.slice(1);
+  if (h.startsWith("task=")) { const id = h.slice(5); history.replaceState(null, "", "#" + U.view); if (task(id)) openTask(id); else toast("That task isn't in this workspace."); return true; }
+  return false;
+}
+
 /* ================= Boot ================= */
 async function boot() {
   try {
@@ -1305,6 +1473,12 @@ async function boot() {
     shell(); S.ready = true;
     const h = location.hash.slice(1); U.view = VIEWS[h] ? h : "today";
     render(true);
+    openFromHash();
+    if (S.mode === "cloud") {
+      try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; const pr = profile(me()); if (tz && pr && pr.timezone !== tz) { await api.updateProfile({ timezone: tz }); localUpsert("profiles", { ...pr, timezone: tz }); } } catch (e) {}
+      let off = false; try { off = localStorage.getItem("tb.pushOff") === "1"; } catch (e) {}
+      if (!off && pushSupported() && Notification.permission === "granted") syncPush(true).then(() => render()).catch(() => {});
+    }
     onChange(() => { if (S.mode === "claude") AI_ON = ENABLE_AI && api.hasAI(); render(); });
     E.runOverdue(); setInterval(() => E.runOverdue(), 3600e3);
     let lastDay = dkey(); setInterval(() => { if (dkey() !== lastDay) { lastDay = dkey(); U.plan = null; U.planState = "idle"; render(); } }, 60e3);

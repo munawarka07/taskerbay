@@ -11,5 +11,8 @@ export const ENABLE_GOOGLE = false;
 // AI features call the Supabase Edge Function "ai" (see supabase/functions/ai). Set to false to hide them.
 export const ENABLE_AI = false; // switch on after deploying supabase/functions/ai with an Anthropic API key
 
+// Popup notifications (Web Push). Public key only; the private key lives in the database.
+export const VAPID_PUBLIC_KEY = "BDITUFK4uOFnXQAuVwMQ-mq5DpkFepbykiyQfTsT8xcMuBG76STlX35DTj3CsJebJWqnRY3bpqoGXxlKFEHt3DY";
+
 export const APP_NAME = "TaskerBay";
 export const CURRENCY = "AED";
