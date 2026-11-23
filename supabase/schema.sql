@@ -460,3 +460,8 @@ alter table public.push_subscriptions enable row level security;
 -- table, so an unapproved account sees nothing but its own profile. Trigger zz_signup_access (private.signup_access)
 -- makes the first account the admin and alerts admins about every later sign-up. Admin RPCs: access_requests(),
 -- set_access(target, allow) (allow=false deletes the account). TRUNCATE/TRIGGER/REFERENCES revoked from app roles.
+
+-- v4 (Nov 2026): chat. public.chat_messages (task_id null = workspace team chat), public.chat_reads (unread tracking).
+-- Members of the workspace can read/send; authors can delete their own; RESTRICTIVE "approved only" applies.
+-- Trigger chat_notify (private.chat_notify) sends one Inbox alert per room until read (assignee, creator and
+-- earlier chatters for task chats; all members for team chat). Both tables are in the realtime publication.

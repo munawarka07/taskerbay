@@ -220,6 +220,8 @@ const I = {
   team: ic('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14a5 5 0 0 1 5.5 5"/>'),
   flow: ic('<rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M6 9v4a3 3 0 0 0 3 3h6"/>'),
   bolt: ic('<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>'),
+  send: ic('<path d="M4 12 20 4l-6 16-3-7z"/><path d="m11 13 9-9"/>'),
+  chat: ic('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11h7M8.5 14h4"/>'),
   bell: ic('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 20a2 2 0 0 0 4 0"/>'),
   gear: ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   more: ic('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'),
@@ -236,7 +238,7 @@ const I = {
 /* ================= Shell ================= */
 const NAV = [
   ["today", "Today", I.today], ["plan", "Planner", I.plan], ["tasks", "Tasks", I.tasks], ["routine", "Routine", I.routine],
-  ["money", "Money", I.money], ["focus", "Focus", I.focus], ["team", "Team & updates", I.team], ["workflows", "Workflows", I.flow],
+  ["money", "Money", I.money], ["focus", "Focus", I.focus], ["team", "Team & updates", I.team], ["chat", "Team chat", I.chat], ["workflows", "Workflows", I.flow],
   ["automations", "Automations", I.bolt], ["inbox", "Inbox", I.bell], ["settings", "Settings", I.gear]
 ];
 const unread = () => S.db.notifications.filter(n => !n.read && (!n.workspace_id || S.db.workspaces.some(w => w.id === n.workspace_id))).length;
@@ -248,7 +250,7 @@ function shell() {
       <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
       ${NAV.slice(0, 6).map(([k, l, i]) => `<button class="tab" data-go="${k}">${i}${l}</button>`).join("")}
       <div class="sec">Team</div>
-      ${NAV.slice(6).map(([k, l, i]) => `<button class="tab" data-go="${k}">${i}${l}${k === "inbox" ? `<span class="badge" id="rail-badge" hidden></span>` : ""}</button>`).join("")}
+      ${NAV.slice(6).map(([k, l, i]) => `<button class="tab" data-go="${k}">${i}${l}${k === "inbox" ? `<span class="badge" id="rail-badge" hidden></span>` : k === "chat" ? `<span class="badge" id="chat-badge" hidden></span>` : ""}</button>`).join("")}
       <button class="fab-wide" data-action="add">${I.plus}Add</button>
     </nav>
     <main>
@@ -279,14 +281,15 @@ function renderChrome() {
   const n = unread();
   ["#rail-badge", "#more-badge"].forEach(s => { const b = $(s); if (b) { b.hidden = !n; b.textContent = n; } });
   const d = $("#bell-dot"); if (d) d.hidden = !n;
+  { const c = chatUnreadAll(), b = $("#chat-badge"); if (b) { b.hidden = !c; b.textContent = c; } }
   const sy = $("#sync"); if (sy) { sy.className = "sync " + (S.online ? "cloud" : "local"); $("span", sy).textContent = S.online ? "Synced" : "Reconnecting"; }
-  const moreViews = ["more", "routine", "money", "focus", "team", "workflows", "automations", "inbox", "settings"];
+  const moreViews = ["more", "routine", "money", "focus", "team", "chat", "workflows", "automations", "inbox", "settings"];
   $$("[data-go]").forEach(b => { if (!b.classList.contains("tab")) return; const k = b.dataset.go; b.classList.toggle("on", k === U.view || (k === "more" && moreViews.includes(U.view) && b.closest(".tabbar"))); });
   $("#banner").innerHTML = S.mode !== "demo" ? "" : api.isClean?.() ? (U.view === "settings" ? `<div class="banner"><span>💾</span><span><b>Saved on this device only.</b> Sync between phone and computer switches on once your TaskerBay account server is connected. Use <b>Copy all my data</b> below as a backup.</span></div>` : "") : `<div class="banner"><span>🧪</span><span><b>Demo mode</b> with sample data. To start your own planner, go to Settings → <b>Start my own planner</b>.</span></div>`;
 }
 
 /* ================= Routing & render ================= */
-const VIEWS = { today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
+const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
 function render(animate = false) {
   if (!S.ready) return;
   renderChrome();
@@ -331,6 +334,7 @@ function taskRow(t, opts = {}) {
   if (pg) chips.push(`<span class="chip subbar">${pg.done}/${pg.total}<span><i style="width:${pg.pct * 100}%"></i></span></span>`);
   chips.push(`<span class="chip dot" style="--c:${AREA_C[t.area] || "var(--muted)"}">${esc(t.area)}</span>`);
   if (t.repeat) chips.push(`<span class="chip">${I.repeat} ${esc(t.repeat)}</span>`);
+  { const cu = chatUnread(t.id); if (cu) chips.push(`<span class="chip chat-chip">💬 ${cu}</span>`); }
   if (t.parent_id && opts.showParent) { const p = task(t.parent_id); if (p) chips.push(`<span class="chip">↳ ${esc(p.title).slice(0, 24)}</span>`); }
   return `<div class="row ${done ? "done" : ""}" style="--p:${PRI_C[t.priority]}" data-id="${t.id}" data-swipe="1">
     <button class="check" data-action="toggle" data-id="${t.id}" aria-label="${done ? "Reopen" : "Complete"}: ${esc(t.title)}">${I.check}</button>
@@ -585,7 +589,8 @@ function refreshTaskSheet(first) {
   const t = task(U.sheet?.id); const host = $("#ts");
   if (!host) return;
   if (!t) { closeSheet(); return; }
-  const keep = {}; ["tf-title", "tf-notes", "upd-text", "step-new"].forEach(id => { const n = $("#" + id); if (n) keep[id] = n.value; });
+  const keep = {}; ["tf-title", "tf-notes", "upd-text", "step-new", "chat-in-task"].forEach(id => { const n = $("#" + id); if (n) keep[id] = n.value; });
+  const chatEl = $("#chat-list-" + t.id), chatAtEnd = !chatEl || chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 120, chatTop = chatEl?.scrollTop;
   // keep the status form's date/time/stage only if the person changed them, so they never go stale
   ["upd-date", "upd-time"].forEach(id => { const n = $("#" + id); if (n && n.value !== n.defaultValue) keep[id] = n.value; });
   { const n = $("#upd-stage"); if (n && !n.options[n.selectedIndex]?.defaultSelected) keep["upd-stage"] = n.value; }
@@ -635,11 +640,13 @@ function refreshTaskSheet(first) {
         <button class="btn" data-action="post-update">Save update</button>
       </div>
     </div>
+    ${isTeam() ? `<div class="card" style="padding:14px;box-shadow:none;margin-top:12px"><div class="card-h" style="margin-bottom:6px"><h2>💬 Chat</h2><span class="sub">${S.db.workspace_members.length} people in ${esc(ws()?.name || "this workspace")}</span></div>${chatPanel(t.id, "chat-in-task")}</div>` : ""}
     <div class="sheet-actions" style="margin-top:14px"><button class="btn danger" data-action="delete-task" data-id="${t.id}">Delete</button>${!E.isDone(t) ? `<button class="btn ghost" data-action="focus-task" data-id="${t.id}">⏱ Focus</button>` : ""}<button class="btn" data-action="close-sheet">Done</button></div>
     <p class="muted" style="font-size:11.5px;text-align:center;margin:10px 0 0">Created ${timeAgo(t.created_at)} by ${esc(nameOf(t.created_by))}${t.completed_at ? ` · finished ${timeAgo(t.completed_at)}` : ""}</p>`;
   Object.entries(keep).forEach(([id, v]) => { const n = $("#" + id); if (n && v !== undefined && document.activeElement !== n) n.value = v; });
   Object.entries(sub).forEach(([id, v]) => { const n = $(`[data-sub-input="${id}"]`); if (n) n.value = v; });
   if (aeId) { const n = aeId.startsWith("sub:") ? $(`[data-sub-input="${aeId.slice(4)}"]`) : $("#" + aeId); if (n && !first) n.focus(); }
+  if (isTeam()) { const el = $("#chat-list-" + t.id); if (el) { if (chatAtEnd) el.scrollTop = el.scrollHeight; else el.scrollTop = chatTop; } if (chatUnread(t.id)) markRead(t.id); }
 }
 async function saveTaskField(el) {
   const t = task(U.sheet?.id); if (!t) return;
@@ -918,7 +925,7 @@ function vInbox() {
   <div class="list">${list.map(n => `<div class="notif ${n.read ? "" : "unread"}" data-action="notif" data-id="${n.id}">${avatar(n.actor_id, true)}<div><p>${esc(n.body)}</p><small>${timeAgo(n.created_at)}${n.workspace_id && n.workspace_id !== S.wsId ? ` · ${esc(S.db.workspaces.find(w => w.id === n.workspace_id)?.name || "")}` : ""}</small></div></div>`).join("") || emptyBox("All quiet", "Assignments, status changes and updates from your team appear here.", I.bell)}</div>`;
 }
 function vMore() {
-  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending & budgets"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["settings", "⚙️", "Settings", "Profile, theme, install"]];
+  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending & budgets"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["settings", "⚙️", "Settings", "Profile, theme, install"]];
   return `<div class="view-h"><div><h1>More</h1><p>Everything else in TaskerBay</p></div></div><div class="hub">${H.map(([k, i, l, s]) => `<button data-go="${k}"><span class="ic">${i}</span><b>${l}</b><small>${s}</small></button>`).join("")}</div>`;
 }
 function vSettings() {
@@ -1200,7 +1207,7 @@ document.addEventListener("click", async e => {
     case "auto-del": { const r = S.db.automations.find(x => x.id === U.sheet.a.id); closeSheet(); if (r) { await remove("automations", r); toast("Rule deleted.", () => insert("automations", r)); } break; }
     case "au-add": readAutoForm(); U.sheet.a.actions.push({ type: "set_priority", value: "High" }); reopenAuto(); break;
     case "au-del": readAutoForm(); U.sheet.a.actions.splice(+a.dataset.i, 1); reopenAuto(); break;
-    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); else if (/^New sign-up request/.test(n?.body || "")) go("settings"); break; }
+    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); else if (/^New sign-up request/.test(n?.body || "")) go("settings"); else if (/^💬/.test(n?.body || "")) go("chat"); break; }
     case "read-all": for (const n of S.db.notifications.filter(n => !n.read)) update("notifications", n, { read: true }); break;
     case "palette": openPalette(); break;
     case "theme": cycleTheme(); render(); break;
@@ -1210,6 +1217,7 @@ document.addEventListener("click", async e => {
     case "demo-reset": localStorage.removeItem("taskerbay.demo.v1"); location.reload(); break;
     case "demo-fresh": { const ok = U.confirmFresh === true; if (!ok) { U.confirmFresh = true; toast("Tap again to erase everything on this device and start fresh."); setTimeout(() => U.confirmFresh = false, 4000); break; } await api.startFresh(profile(me())?.full_name !== "You" ? profile(me())?.full_name : "", true); break; }
     case "sign-out": { try { const reg = await navigator.serviceWorker?.ready; const sub = await reg?.pushManager?.getSubscription(); if (sub) { await api.removePush(sub.endpoint); await sub.unsubscribe(); } } catch (e) {} await api.signOut(); break; }
+    case "chat-del": { const m = S.db.chat_messages.find(x => x.id === id); if (m && m.author_id === me()) { if (U.confirmDel !== id) { U.confirmDel = id; toast("Tap ✕ again to delete this message."); setTimeout(() => { if (U.confirmDel === id) U.confirmDel = null; }, 3000); break; } U.confirmDel = null; await remove("chat_messages", m); } break; }
     case "push-on": await enablePush(); break;
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
@@ -1245,6 +1253,7 @@ document.addEventListener("change", async e => {
 });
 let journalTimer;
 document.addEventListener("input", e => {
+  if (e.target.closest?.('[data-form="chat"]')) { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 140) + "px"; }
   const el = e.target;
   if (el.dataset.quick) { const h = $(`[data-hint-for="${el.id}"]`); if (h) h.innerHTML = hintFor(el.value); }
   if (el.dataset.journal) { clearTimeout(journalTimer); const v = el.value; journalTimer = setTimeout(() => { const j = S.db.journal.find(x => x.day === dkey() && x.user_id === me()) || {}; upsert("journal", { user_id: me(), day: dkey(), mood: j.mood ?? null, win: v.trim(), note: j.note || "" }); }, 900); }
@@ -1265,11 +1274,13 @@ document.addEventListener("keydown", async e => {
     U.expanded.add(parent); buzz(8);
     setTimeout(() => (el.id === "step-new" ? $("#step-new") : $(`[data-sub-input="${parent}"]`))?.focus(), 40);
   }
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && el.closest?.('[data-form="chat"]')) { e.preventDefault(); el.closest("form").requestSubmit(); return; }
   if (e.key === "Enter" && el.id === "upd-text" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); $('[data-action="post-update"]').click(); }
 });
 
 document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
+  if (kind === "chat") { await sendChat(f.dataset.task || null, $("textarea", f)); return; }
   if (kind === "quick") {
     const inp = $("input", f), raw = inp.value, h = $(`[data-hint-for="${inp.id}"]`);
     const it = parseIntent(raw);
@@ -1459,6 +1470,57 @@ function openFromHash() {
   const h = location.hash.slice(1);
   if (h.startsWith("task=")) { const id = h.slice(5); history.replaceState(null, "", "#" + U.view); if (task(id)) openTask(id); else toast("That task isn't in this workspace."); return true; }
   return false;
+}
+
+/* ================= Chat (task chats + team chat) ================= */
+const roomKey = taskId => taskId || "team";
+const roomMsgs = taskId => S.db.chat_messages.filter(m => (m.task_id || null) === (taskId || null)).sort((a, b) => a.created_at.localeCompare(b.created_at));
+const lastRead = taskId => S.db.chat_reads.find(r => r.workspace_id === S.wsId && r.room === roomKey(taskId))?.last_read_at || "";
+const chatUnread = taskId => roomMsgs(taskId).filter(m => m.author_id !== me() && m.created_at > lastRead(taskId)).length;
+const chatUnreadAll = () => S.db.chat_messages.filter(m => m.author_id !== me() && m.created_at > lastRead(m.task_id)).length;
+const markTimers = {};
+function markRead(taskId) {
+  if (!chatUnread(taskId)) return;
+  const k = roomKey(taskId); clearTimeout(markTimers[k]);
+  markTimers[k] = setTimeout(() => {
+    const latest = roomMsgs(taskId).slice(-1)[0]?.created_at || new Date().toISOString();
+    upsert("chat_reads", { user_id: me(), workspace_id: S.wsId, room: k, last_read_at: latest > new Date().toISOString() ? latest : new Date().toISOString() }).catch(() => {});
+    // the matching Inbox alert is read too
+    S.db.notifications.filter(n => !n.read && /^💬/.test(n.body) && n.workspace_id === S.wsId && (n.task_id || null) === (taskId || null)).forEach(n => update("notifications", n, { read: true }).catch(() => {}));
+  }, 400);
+}
+function chatTime(iso) { const d = new Date(iso); return dkey(d) === dkey() ? d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) + " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }); }
+function chatPanel(taskId, inputId) {
+  const msgs = roomMsgs(taskId), lr = lastRead(taskId); let prev = null, shownNew = false;
+  const body = msgs.map(m => {
+    const mine = m.author_id === me(), grouped = prev && prev.author_id === m.author_id && (new Date(m.created_at) - new Date(prev.created_at)) < 5 * 60e3;
+    let sep = ""; if (!shownNew && !mine && lr && m.created_at > lr) { sep = `<div class="chat-new"><span>New</span></div>`; shownNew = true; }
+    const day = !prev || dkey(new Date(prev.created_at)) !== dkey(new Date(m.created_at)) ? `<div class="chat-day">${dkey(new Date(m.created_at)) === dkey() ? "Today" : new Date(m.created_at).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</div>` : "";
+    prev = m;
+    return `${day}${sep}<div class="msg-row ${mine ? "me" : ""} ${grouped && !day && !sep ? "grouped" : ""}">${!mine ? (grouped && !day && !sep ? `<span class="av-sp"></span>` : avatar(m.author_id)) : ""}<div class="msg">${!mine && !(grouped && !day && !sep) ? `<b>${esc(nameOf(m.author_id))}</b>` : ""}<p>${esc(m.body)}</p><small>${chatTime(m.created_at)}${mine ? ` <button class="msg-del" data-action="chat-del" data-id="${m.id}" aria-label="Delete message">✕</button>` : ""}</small></div></div>`;
+  }).join("");
+  return `<div class="chat-box" data-chat-room="${roomKey(taskId)}"><div class="chat-list" id="chat-list-${roomKey(taskId)}">${body || `<p class="muted chat-empty">${taskId ? "No messages yet. Ask a question or share an update about this task." : "Say hello to your team 👋"}</p>`}</div>
+    <form class="chat-send" data-form="chat" data-task="${taskId || ""}" autocomplete="off"><label for="${inputId}" class="sr">Message</label><textarea id="${inputId}" class="inp" rows="1" placeholder="Message${taskId ? "" : " the team"}…" enterkeyhint="send"></textarea><button class="btn" type="submit" aria-label="Send">${I.send || "➤"}</button></form></div>`;
+}
+function scrollChat(taskId, force) {
+  const el = $("#chat-list-" + roomKey(taskId)); if (!el) return;
+  const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  if (force || near || !el.dataset.seen) { el.scrollTop = el.scrollHeight; el.dataset.seen = "1"; }
+}
+function vChat() {
+  const w = ws();
+  if (!isTeam()) return `<div class="view-h"><div><h1>💬 Team chat</h1><p>${esc(w?.name || "")}</p></div></div>${emptyBox("Chat is for shared workspaces", "Create a shared workspace in Team & updates and invite people. Then you can chat here and inside every shared task.", I.chat)}<div style="text-align:center;margin-top:12px"><button class="btn" data-go="team">Go to Team</button></div>`;
+  setTimeout(() => { scrollChat(null); markRead(null); }, 0);
+  return `<div class="view-h"><div><h1>💬 Team chat</h1><p>${esc(w?.icon || "")} ${esc(w?.name || "")} · ${S.db.workspace_members.map(m => esc(nameOf(m.user_id).split(" ")[0])).join(", ")}</p></div></div>
+  <div class="card chat-card">${chatPanel(null, "chat-in-team")}</div>`;
+}
+async function sendChat(taskId, input) {
+  const body = input.value.trim(); if (!body) return;
+  input.value = ""; input.style.height = "";
+  const row = { id: uuid(), workspace_id: S.wsId, task_id: taskId || null, author_id: me(), body: body.slice(0, 4000), created_at: new Date().toISOString() };
+  try { await insert("chat_messages", row); upsert("chat_reads", { user_id: me(), workspace_id: S.wsId, room: roomKey(taskId), last_read_at: row.created_at }).catch(() => {}); buzz(8); }
+  catch (e) { input.value = body; }
+  setTimeout(() => scrollChat(taskId, true), 30);
 }
 
 /* ================= Access approval ================= */

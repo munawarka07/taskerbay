@@ -5,11 +5,12 @@ export const PK = {
   profiles: ["id"], workspaces: ["id"], workspace_members: ["workspace_id", "user_id"], workspace_invites: ["id"],
   workflows: ["id"], tasks: ["id"], task_updates: ["id"], notifications: ["id"], automations: ["id"],
   routine_items: ["id"], routine_logs: ["item_id", "day"], journal: ["user_id", "day"], focus_sessions: ["id"],
-  expenses: ["id"], budgets: ["user_id", "category"]
+  expenses: ["id"], budgets: ["user_id", "category"],
+  chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"]
 };
 const TABLES = Object.keys(PK);
-const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites"];
-const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications"];
+const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages"];
+const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads"];
 
 export const S = {
   mode: SUPABASE_URL && SUPABASE_ANON_KEY ? "cloud" : "demo",
@@ -81,7 +82,8 @@ const cloud = {
       q("focus_sessions", x => x.eq("user_id", uid).gte("day", since(120))),
       q("expenses", x => x.eq("user_id", uid).gte("date", since(800))),
       q("budgets", x => x.eq("user_id", uid)),
-      q("notifications", x => x.eq("user_id", uid).order("created_at", { ascending: false }).limit(150))
+      q("notifications", x => x.eq("user_id", uid).order("created_at", { ascending: false }).limit(150)),
+      q("chat_reads", x => x.eq("user_id", uid))
     ]);
   },
   async loadWorkspace(ws) {
@@ -93,7 +95,8 @@ const cloud = {
       q("task_updates", x => x.eq("workspace_id", ws).order("created_at", { ascending: false }).limit(400)),
       q("automations", x => x.eq("workspace_id", ws).order("created_at")),
       q("workspace_members", x => x.eq("workspace_id", ws)),
-      q("workspace_invites", x => x.eq("workspace_id", ws))
+      q("workspace_invites", x => x.eq("workspace_id", ws)),
+      q("chat_messages", x => x.eq("workspace_id", ws).order("created_at", { ascending: false }).limit(600))
     ]);
     const ids = [...new Set([S.user.id, ...S.db.workspace_members.map(m => m.user_id)])];
     const { data } = await c.from("profiles").select("*").in("id", ids);

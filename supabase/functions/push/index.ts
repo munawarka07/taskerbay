@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
     const { data: notes } = await db.from("notifications").select("id, body, task_id").eq("user_id", p.id).is("pushed_at", null).eq("read", false)
       .gte("created_at", new Date(Date.now() - 6 * 3600e3).toISOString()).order("created_at").limit(5);
     for (const n of notes || []) {
-      await sendTo(mine, { title: /^New sign-up request/.test(n.body) ? "👤 New sign-up request" : "TaskerBay", body: n.body, url: n.task_id ? `${SITE}#task=${n.task_id}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : `${SITE}#inbox`, tag: `n-${n.id}` });
+      await sendTo(mine, { title: /^New sign-up request/.test(n.body) ? "👤 New sign-up request" : "TaskerBay", body: n.body, url: n.task_id ? `${SITE}#task=${n.task_id}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : /^💬/.test(n.body) ? `${SITE}#chat` : `${SITE}#inbox`, tag: `n-${n.id}` });
       stats.inbox++;
     }
     if (notes?.length) await db.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notes.map(n => n.id));
