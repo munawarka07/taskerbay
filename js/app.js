@@ -300,6 +300,7 @@ function render(animate = false) {
 }
 function go(view, opts = {}) {
   if (!VIEWS[view]) view = "today";
+  if (view === "settings") U.access = null; // always show fresh access requests
   U.view = view; Object.assign(U, opts);
   if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   render(true); scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
@@ -926,6 +927,7 @@ function vSettings() {
   <div class="grid g-2">
     <div class="card"><div class="card-h"><h2>Profile</h2></div>
       <form data-form="profile"><div class="field"><label for="pf-name">Your name</label><input class="inp" id="pf-name" value="${esc(p.full_name || "")}"></div><button class="btn" type="submit">Save</button></form></div>
+    ${accessCard()}
     ${pushCard()}
     <div class="card"><div class="card-h"><h2>Appearance</h2></div><div class="seg">${THEMES.map(t => `<button class="${theme === t ? "on" : ""}" data-action="set-theme" data-v="${t}">${t === "auto" ? "Auto" : t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div></div>
     <div class="card"><div class="card-h"><h2>Install on your phone</h2></div><ol class="muted" style="margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px">
@@ -1198,7 +1200,7 @@ document.addEventListener("click", async e => {
     case "auto-del": { const r = S.db.automations.find(x => x.id === U.sheet.a.id); closeSheet(); if (r) { await remove("automations", r); toast("Rule deleted.", () => insert("automations", r)); } break; }
     case "au-add": readAutoForm(); U.sheet.a.actions.push({ type: "set_priority", value: "High" }); reopenAuto(); break;
     case "au-del": readAutoForm(); U.sheet.a.actions.splice(+a.dataset.i, 1); reopenAuto(); break;
-    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); break; }
+    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); else if (/^New sign-up request/.test(n?.body || "")) go("settings"); break; }
     case "read-all": for (const n of S.db.notifications.filter(n => !n.read)) update("notifications", n, { read: true }); break;
     case "palette": openPalette(); break;
     case "theme": cycleTheme(); render(); break;
@@ -1209,6 +1211,8 @@ document.addEventListener("click", async e => {
     case "demo-fresh": { const ok = U.confirmFresh === true; if (!ok) { U.confirmFresh = true; toast("Tap again to erase everything on this device and start fresh."); setTimeout(() => U.confirmFresh = false, 4000); break; } await api.startFresh(profile(me())?.full_name !== "You" ? profile(me())?.full_name : "", true); break; }
     case "sign-out": { try { const reg = await navigator.serviceWorker?.ready; const sub = await reg?.pushManager?.getSubscription(); if (sub) { await api.removePush(sub.endpoint); await sub.unsubscribe(); } } catch (e) {} await api.signOut(); break; }
     case "push-on": await enablePush(); break;
+    case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
+    case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "push-test": { const r = await api.testPush().catch(e => ({ error: e.message })); toast(r?.sent ? `Test popup sent to ${r.sent} device${r.sent > 1 ? "s" : ""}.` : r?.error ? `Couldn't send: ${r.error}` : "No device is set up for popups yet."); break; }
     case "push-off": { try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) { await api.removePush(sub.endpoint); await sub.unsubscribe(); } } catch (e) {} U.pushOn = false; try { localStorage.setItem("tb.pushOff", "1"); } catch (e) {} toast("Popups turned off on this device."); render(); break; }
     case "push-banner-x": { try { localStorage.setItem("tb.pushBanner", "no"); } catch (e) {} render(); break; }
@@ -1457,6 +1461,30 @@ function openFromHash() {
   return false;
 }
 
+/* ================= Access approval ================= */
+function pendingScreen(acc) {
+  $("#root").innerHTML = `<div class="auth"><div class="auth-card">
+    <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
+    <h1>Waiting for approval</h1>
+    <p class="lead">Thanks${acc?.full_name ? ", " + esc(acc.full_name.split(" ")[0]) : ""}. Your account (${esc(S.user.email || "")}) has been created and the owner has been notified. You can use TaskerBay as soon as it's approved.</p>
+    <button class="btn" onclick="location.reload()">Check again</button>
+    <div class="alt">or</div>
+    <button class="btn ghost" id="pend-out">Sign out</button></div></div>`;
+  $("#pend-out").onclick = () => api.signOut();
+}
+function accessCard() {
+  if (!U.isAdmin) return "";
+  if (!U.access) { U.access = "loading"; api.accessRequests().then(r => { U.access = r || []; render(); }).catch(e => { U.access = { error: e.message }; render(); }); }
+  const list = Array.isArray(U.access) ? U.access : [];
+  const pend = list.filter(x => !x.approved), ok = list.filter(x => x.approved);
+  const row = (x, pending) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${pending ? "asked " + timeAgo(x.created_at) : x.is_admin ? "admin" : "approved"}</small></div>${pending ? `<button class="btn" data-action="acc-approve" data-id="${x.id}">Approve</button><button class="btn ghost" data-action="acc-remove" data-id="${x.id}">Reject</button>` : x.is_admin ? "" : `<button class="btn ghost" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div>`;
+  return `<div class="card"><div class="card-h"><h2>👤 Access requests</h2>${pend.length ? `<span class="badge-n">${pend.length}</span>` : ""}</div>
+    ${U.access === "loading" ? `<p class="muted" style="margin:0">Loading…</p>` : U.access?.error ? `<p class="muted" style="margin:0">${esc(U.access.error)}</p>` : `
+    ${pend.length ? pend.map(x => row(x, true)).join("") : `<p class="muted" style="margin:0 0 8px;font-size:14px">No one is waiting. When someone signs up with your access code, they'll appear here and you'll get an alert.</p>`}
+    ${ok.length ? `<details class="acc-ok"><summary>People with access (${ok.length})</summary>${ok.map(x => row(x, false)).join("")}</details>` : ""}`}</div>`;
+}
+const avatarText = n => `<span class="av-t">${esc(String(n || "?").trim().charAt(0).toUpperCase())}</span>`;
+
 /* ================= Boot ================= */
 async function boot() {
   try {
@@ -1465,6 +1493,11 @@ async function boot() {
     const user = await api.session();
     if (!user) { authScreen(); return; }
     S.user = user;
+    if (S.mode === "cloud") {
+      const acc = await api.myAccess();
+      if (!acc.approved) { pendingScreen(acc); return; }
+      U.isAdmin = !!acc.is_admin;
+    }
     await api.loadAll();
     let saved = null; try { saved = localStorage.getItem("tb.ws"); } catch (e) {}
     S.wsId = S.db.workspaces.some(w => w.id === saved) ? saved : (S.db.workspaces.find(w => w.owner_id === user.id && w.name === "Personal") || S.db.workspaces[0])?.id;

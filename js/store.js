@@ -135,6 +135,9 @@ const cloud = {
   async updateProfile(patch) { await this.update("profiles", { id: S.user.id }, patch); },
   async savePush(sub) { const c = await sbClient(); const { error } = await c.from("push_subscriptions").upsert({ ...sub, user_id: S.user.id }, { onConflict: "endpoint" }); if (error) throw error; },
   async removePush(endpoint) { const c = await sbClient(); await c.from("push_subscriptions").delete().eq("endpoint", endpoint); },
+  async myAccess() { const c = await sbClient(); const { data, error } = await c.from("profiles").select("approved, is_admin, full_name").eq("id", S.user.id).maybeSingle(); if (error) throw error; return data || { approved: false, is_admin: false }; },
+  async accessRequests() { return this.rpc("access_requests"); },
+  async setAccess(target, allow) { return this.rpc("set_access", { target, allow }); },
   async testPush() { const c = await sbClient(); const { data, error } = await c.functions.invoke("push", { body: { test: true } }); if (error) throw error; return data; }
 };
 

@@ -453,3 +453,10 @@ alter table public.push_subscriptions enable row level security;
 -- public.push_config() is callable by service_role only. auth.users has a BEFORE INSERT trigger
 -- (private.require_signup_code) that rejects sign-ups without the right access code.
 -- pg_cron job 'taskerbay-push' calls the Edge Function supabase/functions/push every 5 minutes.
+
+-- v3 (Nov 2026): owner approval for new accounts
+-- profiles.approved / profiles.is_admin (people can't change these themselves: column-level UPDATE grant only on
+-- full_name, avatar_url, timezone, last_digest_on). public.is_approved() + a RESTRICTIVE policy "approved only" on every
+-- table, so an unapproved account sees nothing but its own profile. Trigger zz_signup_access (private.signup_access)
+-- makes the first account the admin and alerts admins about every later sign-up. Admin RPCs: access_requests(),
+-- set_access(target, allow) (allow=false deletes the account). TRUNCATE/TRIGGER/REFERENCES revoked from app roles.

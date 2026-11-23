@@ -610,3 +610,14 @@ main{min-width:0}
 .push-banner small{display:block;color:var(--muted);font-weight:600;font-size:12.5px;margin-top:2px}
 .push-banner .btn{flex:none;padding:8px 14px}
 .push-banner .x{flex:none;background:none;border:0;color:var(--muted);font-size:15px;cursor:pointer;padding:6px}
+
+/* Access requests */
+.acc-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.acc-row:last-child{border-bottom:0}
+.acc-row .who{flex:1;min-width:0}
+.acc-row .who b{display:block;font-size:14px}
+.acc-row .who small{display:block;color:var(--muted);font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acc-row .btn{flex:none;padding:7px 12px;font-size:13px}
+.av-t{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-weight:800}
+.badge-n{background:var(--accent);color:#fff;border-radius:99px;font-size:12px;font-weight:800;padding:2px 9px}
+.acc-ok{margin-top:8px}.acc-ok summary{cursor:pointer;font-weight:700;font-size:13px;color:var(--muted);padding:6px 0}
