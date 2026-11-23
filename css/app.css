@@ -687,3 +687,10 @@ main{min-width:0}
 .da-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .da-actions .btn{padding:10px 6px;font-size:13.5px}
 .da-x{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer;padding:6px}
+
+.spell-chip{color:var(--muted);font-weight:600}.spell-chip b{color:var(--accent)}
+
+.upd-preview{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;min-height:0}
+.upd-preview:empty{display:none}
+.done-chip{color:var(--green,#2E9B5B);font-weight:800}.next-chip{color:var(--accent);font-weight:800}
+.status-form .upd-grid{grid-template-columns:1fr 1fr}

@@ -1,6 +1,7 @@
 // TaskerBay app: screens, interactions and animations.
 import { S, api, initBackend, onChange, onError, emit, insert, upsert, update, remove, uuid, localUpsert } from "./store.js";
 import * as E from "./engine.js";
+import * as SP from "./spell.js";
 import { ENABLE_GOOGLE, ENABLE_AI, CURRENCY, VAPID_PUBLIC_KEY } from "./config.js";
 
 const { dkey, parseKey, addDays } = E;
@@ -59,6 +60,19 @@ function sortTasks(a, b) {
   if (pr[a.priority] !== pr[b.priority]) return pr[a.priority] - pr[b.priority];
   return a.position - b.position;
 }
+
+/* Spelling: fix obvious typos (never names), unless the person chose to keep their spelling */
+function spellFix(text, keepKey) {
+  if (!text || U.spellOff || (keepKey && U.keepSpell === keepKey)) return { text, changes: [] };
+  return SP.fix(text);
+}
+function refreshKnownWords() {
+  const w = new Set();
+  S.db.profiles.forEach(p => String(p.full_name || "").split(/\s+/).forEach(x => x && w.add(x)));
+  S.db.tasks.forEach(t => String(t.title || "").split(/[^A-Za-z']+/).forEach(x => x.length > 3 && w.add(x)));
+  SP.setKnown([...w]);
+}
+const spellNote = ch => ch.length ? `<span class="chip spell-chip" title="Spelling fixed">✏️ ${ch.slice(0, 3).map(c => `${esc(c.from)}→<b>${esc(c.to)}</b>`).join(", ")}${ch.length > 3 ? "…" : ""}</span>` : "";
 
 /* Quick add: "Send payslips tomorrow 3pm #work !high @sara *"
    Also understands plain sentences: "call bank on 25 nov at 3 pm", "in 2 days", "next week", "noon". */
@@ -172,6 +186,42 @@ function parseIntent(text) {
   if (note) { const nq = parseQuick(note); if (nq.title) note = nq.title; note = note.charAt(0).toUpperCase() + note.slice(1); }
   const stage = kind ? stageFor(t, kind) : undefined;
   return { type: "update", task: t, stage, note, due_date: q.due_date || undefined, due_time: q.due_time || undefined };
+}
+
+/* Smart status update: "collect docs done, next is send to HR, remind me thursday 10am"
+   -> ticks the matching step, adds/sets the next step, moves the task's date/time and sets the popup. */
+const DONE_RX = /\b(done|completed?|finished|over|submitted|sent|received|collected|signed|approved|cleared|paid|uploaded|closed|ok)\b/i;
+function analyzeUpdate(t, text) {
+  const res = { note: "", spell: [], doneSteps: [], next: null, due_date: null, due_time: null };
+  if (!text.trim()) return res;
+  const sp = spellFix(text); res.spell = sp.changes; const fixed = sp.text; res.note = fixed.trim(); res.note = res.note.charAt(0).toUpperCase() + res.note.slice(1);
+  const q = parseQuick(fixed); if (q.due_date) res.due_date = q.due_date; if (q.due_time) res.due_time = q.due_time;
+  const steps = E.descendants(t.id).filter(x => !E.isDone(x));
+  const bestStep = phrase => { const pw = new Set(words3(phrase)); let best = null; for (const st of steps) { const tw = [...new Set(words3(st.title))]; if (!tw.length) continue; const hit = tw.filter(w => pw.has(w) || [...pw].some(x => x.length > 4 && (x.startsWith(w) || w.startsWith(x)))).length; const sc = hit / tw.length; if (hit && (sc >= 0.5 || hit >= 2) && (!best || sc > best.sc)) best = { st, sc }; } return best?.st || null; };
+  // split "A done, next is B, remind me ..." into parts
+  const nextM = fixed.match(/\bnext(?:\s+step)?\s*(?:is|will be|would be|to|:|-|–|=)?\s+(.+)$/i);
+  const before = nextM ? fixed.slice(0, nextM.index) : fixed;
+  before.split(/[,.;]|\band\b|\bthen\b/i).forEach(seg => { if (!DONE_RX.test(seg)) return; const st = bestStep(seg); if (st && !res.doneSteps.includes(st)) res.doneSteps.push(st); });
+  if (nextM) {
+    let phrase = nextM[1].split(/\b(remind(er)?|alert|follow ?up on|on (?=\d|mon|tue|wed|thu|fri|sat|sun|tomorrow|today|next))\b/i)[0];
+    phrase = parseQuick(phrase).title.replace(/^(to|is|the|step)\s+/i, "").replace(/[\s,;:.-]+$/, "");
+    if (phrase && phrase.length > 1) { const st = bestStep(phrase); res.next = st ? { step: st } : { title: phrase.charAt(0).toUpperCase() + phrase.slice(1) }; }
+  }
+  return res;
+}
+function updatePreview(t) {
+  const host = $("#upd-preview"), ta = $("#upd-text"); if (!host || !ta) return;
+  const a = analyzeUpdate(t, ta.value);
+  // fill the date/time boxes from the sentence, unless the person set them by hand
+  const dEl = $("#upd-date"), tEl = $("#upd-time");
+  if (a.due_date && dEl && !dEl.dataset.manual) dEl.value = a.due_date;
+  if (a.due_time && tEl && !tEl.dataset.manual) tEl.value = a.due_time;
+  const bits = [];
+  a.doneSteps.forEach(st => bits.push(`<span class="chip done-chip">✓ ${esc(st.title)}</span>`));
+  if (a.next) bits.push(`<span class="chip next-chip">➜ Next: ${esc(a.next.step ? a.next.step.title : a.next.title)}${a.next.step ? "" : " (new step)"}</span>`);
+  if (a.due_date || a.due_time) bits.push(`<span class="chip today">🔔 ${esc(dueLabel({ due_date: a.due_date || dEl?.value || dkey(), due_time: a.due_time || tEl?.value || null }))}</span>`);
+  if (a.spell.length) bits.push(spellNote(a.spell));
+  host.innerHTML = bits.length ? `<span class="muted" style="font-size:12px;font-weight:700">Will do:</span>${bits.join("")}` : "";
 }
 
 /* ================= Feedback: toast, confetti, ripple, count-up ================= */
@@ -360,7 +410,12 @@ function quickAdd(id, placeholder) {
   return `<form class="qa" data-form="quick" autocomplete="off"><label for="${id}" class="sr">New task</label><input id="${id}" data-quick="1" placeholder="${placeholder}" enterkeyhint="done"><button class="btn" type="submit">${I.plus}<span>Add</span></button><button class="btn ghost qa-bulk" type="button" data-action="bulk" title="Paste a list of tasks">☰<span>Bulk</span></button></form>
   <div class="qa-hint" data-hint-for="${id}">${hintFor("")}</div>`;
 }
-function hintFor(v) {
+function hintFor(raw) {
+  const sp = spellFix(raw, raw), v = sp.text;
+  const keepBtn = sp.changes.length ? `${spellNote(sp.changes)}<button type="button" class="link" data-action="keep-spell" style="font-size:12px">Keep my spelling</button>` : "";
+  return hintCore(v, raw) + keepBtn;
+}
+function hintCore(v, raw) {
   if (!v.trim()) return `<span>Shortcuts:</span><code>today</code><code>fri</code><code>3pm</code><code>#work</code><code>!high</code>${isTeam() ? "<code>@name</code>" : ""}<code>*</code><code>every week</code><span>· or update one:</span><code>payroll done</code><code>move visa to thu 3pm</code>`;
   const it = parseIntent(v);
   if (it) {
@@ -607,7 +662,8 @@ function refreshTaskSheet(first) {
   const chatEl = $("#chat-list-" + t.id), chatAtEnd = !chatEl || chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 120, chatTop = chatEl?.scrollTop;
   // keep the status form's date/time/stage only if the person changed them, so they never go stale
   ["upd-date", "upd-time"].forEach(id => { const n = $("#" + id); if (n && n.value !== n.defaultValue) keep[id] = n.value; });
-  { const n = $("#upd-stage"); if (n && !n.options[n.selectedIndex]?.defaultSelected) keep["upd-stage"] = n.value; }
+  ["upd-stage", "upd-rem"].forEach(id => { const n = $("#" + id); if (n && !n.options[n.selectedIndex]?.defaultSelected) keep[id] = n.value; });
+  const manual = { d: $("#upd-date")?.dataset.manual, t: $("#upd-time")?.dataset.manual };
   const sub = {}; $$("[data-sub-input]").forEach(n => { if (n.value) sub[n.dataset.subInput] = n.value; });
   const aeId = document.activeElement?.id || (document.activeElement?.dataset?.subInput ? "sub:" + document.activeElement.dataset.subInput : null);
   const path = E.pathOf(t), wf = E.workflowOf(t), pg = E.progressOf(t.id);
@@ -646,10 +702,12 @@ function refreshTaskSheet(first) {
       ${t.status_note ? `<div class="status-now"><span class="lab">Current status</span><p>${esc(t.status_note)}</p><small>${t.status_at ? timeAgo(t.status_at) : ""}${t.due_date ? ` · next: ${esc(dueLabel(t))}` : ""}</small></div>` : ""}
       <div class="activity">${ups.length ? ups.map(u => u.kind === "comment" ? `<div class="upd">${avatar(u.author_id, true)}<div class="bubble"><b>${esc(nameOf(u.author_id))}</b><small>${timeAgo(u.created_at)}</small><p>${esc(u.body)}</p>${u.new_due_date || u.new_due_time ? `<em class="next">→ Next: ${esc(dueLabel({ due_date: u.new_due_date || t.due_date, due_time: u.new_due_time || (u.new_due_date ? null : t.due_time) }))}</em>` : ""}</div></div>` : `<div class="upd sys"><i style="--c:${u.to_stage ? (E.stagesOf(t).find(s => s.key === u.to_stage)?.color || "var(--muted)") : "var(--muted)"}"></i><span>${esc(u.body)} · ${timeAgo(u.created_at)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:13px">No updates yet. Add the latest status below. You can move the date and time at the same time, and every update stays here as a timeline.</p>`}</div>
       <div class="post status-form">
-        <label for="upd-text" class="sr">Status update</label><textarea class="inp" id="upd-text" placeholder="What's the latest? e.g. Sent to HR, waiting for approval"></textarea>
+        <label for="upd-text" class="sr">Status update</label><textarea class="inp" id="upd-text" placeholder="What's the latest? e.g. Collect docs done, next is send to HR, remind me Thursday 10am"></textarea>
+        <div id="upd-preview" class="upd-preview"></div>
         <div class="fgrid upd-grid">
           <div class="field"><label for="upd-date">Next date</label><input class="inp" type="date" id="upd-date" value="${t.due_date || ""}"></div>
           <div class="field"><label for="upd-time">Time</label><input class="inp" type="time" id="upd-time" value="${fmtTime(t.due_time)}"></div>
+          <div class="field"><label for="upd-rem">Reminder</label>${remindSelect("upd-rem", t.remind_before ?? 0)}</div>
           <div class="field"><label for="upd-stage">Stage</label><select class="inp" id="upd-stage">${E.stagesOf(t).map(s => `<option value="${esc(s.key)}" ${s.key === E.stageOf(t).key ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>
         </div>
         <button class="btn" data-action="post-update">Save update</button>
@@ -661,6 +719,8 @@ function refreshTaskSheet(first) {
   Object.entries(keep).forEach(([id, v]) => { const n = $("#" + id); if (n && v !== undefined && document.activeElement !== n) n.value = v; });
   Object.entries(sub).forEach(([id, v]) => { const n = $(`[data-sub-input="${id}"]`); if (n) n.value = v; });
   if (aeId) { const n = aeId.startsWith("sub:") ? $(`[data-sub-input="${aeId.slice(4)}"]`) : $("#" + aeId); if (n && !first) n.focus(); }
+  if (manual.d && $("#upd-date")) $("#upd-date").dataset.manual = "1"; if (manual.t && $("#upd-time")) $("#upd-time").dataset.manual = "1";
+  updatePreview(t);
   if (isTeam()) { const el = $("#chat-list-" + t.id); if (el) { if (chatAtEnd) el.scrollTop = el.scrollHeight; else el.scrollTop = chatTop; } if (chatUnread(t.id)) markRead(t.id); }
 }
 async function saveTaskField(el) {
@@ -984,13 +1044,13 @@ function splitBulk(text) {
 }
 function bulkParse(text) {
   const def = U.bulk.def;
-  const rows = splitBulk(text).map(line => {
+  const rows = splitBulk(text).map(original => { const sp = U.bulk.fixSpell === false ? { text: original, changes: [] } : SP.fix(original); const line = sp.text; const spell = sp.changes;
     const it = U.bulk.allowUpdates ? parseIntent(line) : null;
-    if (it) return { on: true, kind: "update", line, task: it.task, stage: it.stage, note: it.note, due_date: it.due_date ?? it.task.due_date, due_time: it.due_time ?? (it.task.due_time ? fmtTime(it.task.due_time) : "") };
+    if (it) return { on: true, kind: "update", line, spell, task: it.task, stage: it.stage, note: it.note, due_date: it.due_date ?? it.task.due_date, due_time: it.due_time ?? (it.task.due_time ? fmtTime(it.task.due_time) : "") };
     const q = parseQuick(line.replace(/^\+\s*/, ""));
     const explicitDate = !!q.due_date, explicitTime = !!q.due_time;
     return {
-      on: true, kind: "new", line, title: q.title || line,
+      on: true, kind: "new", line, spell, title: q.title || line,
       area: /#(w|work|p|personal|proj)/i.test(line) ? q.area : WORK_RX.test(line) ? "Work" : (isTeam() ? "Work" : "Personal"),
       priority: /![hml123]/i.test(line) ? q.priority : URGENT_RX.test(line) ? "High" : q.priority,
       due_date: explicitDate ? q.due_date : def.date, due_time: explicitTime ? q.due_time : def.time,
@@ -1011,7 +1071,8 @@ function bulkSheet(prefill = "") {
     <div class="field"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Prepare December payroll by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
     <div class="bk-def"><span class="lab">Default reminder for lines without a date</span>
       <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time">${remindSelect("bk-rem", 0, 'aria-label="Reminder for all"')}<button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
-      <label class="bk-chk"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label></div>
+      <label class="bk-chk"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label>
+      <label class="bk-chk"><input type="checkbox" id="bk-spell" checked> Fix spelling mistakes (names are never changed)</label></div>
     <div id="bk-preview"></div>
     <div class="sheet-actions"><button class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" data-action="bk-save" id="bk-save" disabled>Add tasks</button></div>`, "tall wide");
   bulkRefresh(true);
@@ -1028,7 +1089,7 @@ function bulkRefresh(reparse) {
         <div class="bk-when"><input class="inp" type="date" data-bk="due_date" data-i="${i}" value="${r.due_date || ""}" aria-label="Date"><input class="inp" type="time" data-bk="due_time" data-i="${i}" value="${r.due_time || ""}" aria-label="Time"></div></div>` : `
       <div class="bk-row ${r.on ? "" : "off"}"><label class="bk-on"><input type="checkbox" data-bk="on" data-i="${i}" ${r.on ? "checked" : ""} aria-label="Include"></label>
         <div class="bk-main"><input class="inp bk-title" data-bk="title" data-i="${i}" value="${esc(r.title)}" aria-label="Task title">
-          <div class="bk-meta"><select class="inp" data-bk="area" data-i="${i}" aria-label="Area">${AREAS.map(a => `<option ${r.area === a ? "selected" : ""}>${a}</option>`).join("")}</select><select class="inp" data-bk="priority" data-i="${i}" aria-label="Priority">${["High", "Medium", "Low"].map(p => `<option ${r.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select>${r.auto ? `<span class="bk-auto" title="Uses the default reminder">auto</span>` : ""}</div></div>
+          <div class="bk-meta"><select class="inp" data-bk="area" data-i="${i}" aria-label="Area">${AREAS.map(a => `<option ${r.area === a ? "selected" : ""}>${a}</option>`).join("")}</select><select class="inp" data-bk="priority" data-i="${i}" aria-label="Priority">${["High", "Medium", "Low"].map(p => `<option ${r.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select>${r.auto ? `<span class="bk-auto" title="Uses the default reminder">auto</span>` : ""}${spellNote(r.spell || [])}</div></div>
         <div class="bk-when"><input class="inp" type="date" data-bk="due_date" data-i="${i}" value="${r.due_date || ""}" aria-label="Date"><input class="inp" type="time" data-bk="due_time" data-i="${i}" value="${r.due_time || ""}" aria-label="Time"></div></div>`).join("")}</div>` : `<p class="muted" style="font-size:13px;margin:8px 2px">Your tasks will appear here as you paste or type.</p>`;
   const b = $("#bk-save"); if (b) { b.disabled = !(n + u); b.textContent = n + u ? `Add ${n ? `${n} task${n > 1 ? "s" : ""}` : ""}${n && u ? " & " : ""}${u ? `${u} update${u > 1 ? "s" : ""}` : ""}` : "Add tasks"; }
 }
@@ -1255,11 +1316,19 @@ document.addEventListener("click", async e => {
     case "add-sub": U.expanded.add(id); refreshTaskSheet(); setTimeout(() => $(`[data-sub-input="${id}"]`)?.focus(), 30); break;
     case "post-update": {
       const tt = task(U.sheet?.id); if (!tt) break;
-      const note = $("#upd-text").value.trim(), d = $("#upd-date").value || null, tm = $("#upd-time").value || null, st = $("#upd-stage").value;
-      const res = await E.statusUpdate(tt, { note, due_date: d, due_time: tm, stage: st });
-      if (!res) { toast("Type a status or change the date, time or stage first."); break; }
-      $("#upd-text").value = ""; ["upd-date", "upd-time"].forEach(id => { const n = $("#" + id); if (n) n.defaultValue = n.value; });
-      buzz(10); toast(E.isDone(res) ? "Done! Update saved." : res.due_date ? `Update saved · next: ${dueLabel(res)}` : "Update saved."); break;
+      const an = analyzeUpdate(tt, $("#upd-text").value);
+      const note = an.note, d = $("#upd-date").value || null, tm = $("#upd-time").value || null, st = $("#upd-stage").value, rem = parseInt($("#upd-rem")?.value ?? "0", 10);
+      for (const s0 of an.doneSteps) { const cur = task(s0.id); if (cur && !E.isDone(cur)) await E.completeTask(cur); }
+      if (an.next) {
+        if (an.next.step) { const cur = task(an.next.step.id); if (cur) await E.changeTask(cur, { due_date: d, due_time: tm, remind_before: -1, starred: true }); }
+        else await E.createTask({ title: an.next.title, parent_id: tt.id, area: tt.area, assignee_id: tt.assignee_id, due_date: d, due_time: tm, remind_before: -1, workflow_id: tt.workflow_id }, 1);
+      }
+      if ((tt.remind_before ?? 0) !== rem) await E.changeTask(task(tt.id), { remind_before: rem });
+      const res = await E.statusUpdate(task(tt.id), { note, due_date: d, due_time: tm, stage: E.isDone(task(tt.id)) ? undefined : st });
+      if (!res && !an.doneSteps.length && !an.next) { toast("Type a status or change the date, time or stage first."); break; }
+      $("#upd-text").value = ""; ["upd-date", "upd-time"].forEach(id => { const n = $("#" + id); if (n) { n.defaultValue = n.value; delete n.dataset.manual; } });
+      const fin = task(tt.id) || res; buzz(10);
+      toast([an.doneSteps.length ? `✓ ${an.doneSteps.length} step${an.doneSteps.length > 1 ? "s" : ""} done` : "", an.next ? `next: ${an.next.step ? an.next.step.title : an.next.title}` : "", fin?.due_date ? `🔔 ${dueLabel(fin)}` : ""].filter(Boolean).join(" · ") || "Update saved."); break;
     }
     case "delete-task": if (t) { closeSheet(); await deleteWithUndo(t); } break;
     case "focus-task": closeSheet(); FT.taskId = id; if (!FT.running) setMode("focus"); go("focus"); break;
@@ -1322,6 +1391,7 @@ document.addEventListener("click", async e => {
       a.disabled = false; a.textContent = label; break;
     }
     case "old-done": { a.disabled = true; a.textContent = "Loading…"; try { const n = await api.loadOldDone(S.wsId); U.oldDone = S.wsId; toast(n ? `Loaded ${n} older finished task${n > 1 ? "s" : ""}.` : "No older finished tasks."); } catch (e) { toast(e.message); } render(); break; }
+    case "keep-spell": { const inp = a.closest(".qa-hint")?.previousElementSibling?.querySelector?.("input") || $("[data-quick]"); const v = inp?.value || ""; const sp = SP.fix(v); SP.learn(sp.changes.map(c => c.from)); U.keepSpell = v; const h = $(`[data-hint-for="${inp?.id}"]`); if (h) h.innerHTML = hintFor(v); toast("OK, I'll keep your spelling for those words from now on."); break; }
     case "push-on": await enablePush(); break;
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
@@ -1349,6 +1419,7 @@ function reopenAuto() { const s = U.sheet; autoSheet(s.a, s.isNew); }
 document.addEventListener("change", async e => {
   if (U.bulk && e.target.dataset?.bk === "on") { const r = U.bulk.rows[+e.target.dataset.i]; if (r) { r.on = e.target.checked; bulkRefresh(false); } return; }
   if (U.bulk && e.target.id === "bk-upd") { U.bulk.allowUpdates = e.target.checked; bulkRefresh(true); return; }
+  if (U.bulk && e.target.id === "bk-spell") { U.bulk.fixSpell = e.target.checked; bulkRefresh(true); return; }
   const el = e.target;
   if (el.dataset.tfield) { await saveTaskField(el); return; }
   if (el.id === "ft-task") { FT.taskId = el.value; render(); }
@@ -1359,6 +1430,7 @@ document.addEventListener("change", async e => {
 });
 let journalTimer;
 document.addEventListener("input", e => {
+  if (U.sheet?.type === "task" && ["upd-text", "upd-date", "upd-time"].includes(e.target.id)) { if (e.target.id !== "upd-text") e.target.dataset.manual = "1"; clearTimeout(U.updT); U.updT = setTimeout(() => { const t = task(U.sheet?.id); if (t) updatePreview(t); }, 200); }
   if (U.bulk && e.target.closest?.("#sheet")) {
     const el = e.target;
     if (el.id === "bk-text") { clearTimeout(U.bulkT); U.bulkT = setTimeout(() => bulkRefresh(true), 250); return; }
@@ -1394,7 +1466,8 @@ document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind === "chat") { await sendChat(f.dataset.task || null, $("textarea", f)); return; }
   if (kind === "quick") {
-    const inp = $("input", f), raw = inp.value, h = $(`[data-hint-for="${inp.id}"]`);
+    const inp = $("input", f), typed = inp.value, h = $(`[data-hint-for="${inp.id}"]`);
+    const sp = spellFix(typed, typed), raw = sp.text; U.keepSpell = null;
     const it = parseIntent(raw);
     if (it) {
       inp.value = ""; if (h) h.innerHTML = hintFor("");
@@ -1407,17 +1480,22 @@ document.addEventListener("submit", async e => {
     }
     const p = parseQuick(raw.replace(/^\+\s*/, "")); if (!p.title) { toast("Type what needs doing first."); return; }
     inp.value = ""; if (h) h.innerHTML = hintFor("");
-    await E.createTask({ title: p.title, area: p.area, priority: p.priority, due_date: p.due_date, due_time: p.due_time, starred: p.starred, repeat: p.repeat, assignee_id: p.assignee_id, remind_before: p.remind_before ?? 0 });
-    inp.focus(); buzz(15); toast("Task added.");
+    const nt = await E.createTask({ title: p.title, area: p.area, priority: p.priority, due_date: p.due_date, due_time: p.due_time, starred: p.starred, repeat: p.repeat, assignee_id: p.assignee_id, remind_before: p.remind_before ?? 0 });
+    inp.focus(); buzz(15);
+    if (sp.changes.length) toast(`Task added · spelling fixed: ${sp.changes.map(c => c.from + " → " + c.to).join(", ")}`, async () => { const orig = parseQuick(typed.replace(/^\+\s*/, "")).title; SP.learn(sp.changes.map(c => c.from)); if (task(nt.id) && orig) await E.changeTask(task(nt.id), { title: orig }); });
+    else toast("Task added.");
   }
   if (kind === "newtask") {
-    const raw = $("#nt-title").value.trim(); if (!raw) return;
+    const typedNt = $("#nt-title").value.trim(); if (!typedNt) return;
+    const spNt = spellFix(typedNt), raw = spNt.text;
     const p = parseQuick(raw), wfId = $("#nt-wf").value, wf = S.db.workflows.find(w => w.id === wfId);
     const preset = U.sheet.preset || {};
     const ntTime = $("#nt-time")?.value || p.due_time || null, ntRem = p.remind_before ?? parseInt($("#nt-rem")?.value ?? "0", 10);
     const nt = await E.createTask({ title: p.title || raw, due_date: $("#nt-due").value || p.due_date || (ntTime ? dkey() : null), due_time: ntTime, remind_before: ntRem, area: $("#nt-area").value, priority: raw.includes("!") ? p.priority : $("#nt-pri").value, workflow_id: wfId, stage: preset.stage && wf?.stages.some(s => s.key === preset.stage) ? preset.stage : E.firstStage(wf), assignee_id: $("#nt-as")?.value || p.assignee_id || me(), starred: p.starred, repeat: p.repeat });
     for (const s of $("#nt-steps").value.split("\n").map(x => x.trim()).filter(Boolean)) await E.createTask({ title: s, parent_id: nt.id, area: nt.area, assignee_id: nt.assignee_id }, 1);
-    closeSheet(); buzz(15); toast("Task created.");
+    closeSheet(); buzz(15);
+    if (spNt.changes.length) toast(`Task created · spelling fixed: ${spNt.changes.map(c => c.from + " → " + c.to).join(", ")}`, async () => { SP.learn(spNt.changes.map(c => c.from)); const orig = parseQuick(typedNt).title || typedNt; if (task(nt.id)) await E.changeTask(task(nt.id), { title: orig }); });
+    else toast("Task created.");
   }
   if (kind === "expense") {
     const amount = parseFloat(($("#ef-amt").value || "").replace(/,/g, "")); if (!(amount > 0)) { $("#ef-amt").focus(); toast("Enter an amount above zero."); return; }
@@ -1758,6 +1836,7 @@ async function boot() {
     }
     onChange(() => { if (S.mode === "claude") AI_ON = ENABLE_AI && api.hasAI(); render(); });
     E.runOverdue(); setInterval(() => E.runOverdue(), 3600e3); setTimeout(checkDueAlerts, 1500);
+    refreshKnownWords(); SP.loadDict().then(() => { refreshKnownWords(); $$("[data-quick]").forEach(i => { const h = $(`[data-hint-for="${i.id}"]`); if (h && i.value) h.innerHTML = hintFor(i.value); }); });
     // Coming back to the app (phone unlocked, tab reopened, back online): fetch the latest from every device
     if (S.mode === "cloud") {
       let hiddenAt = 0, busy = false;
