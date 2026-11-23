@@ -1243,14 +1243,14 @@ function authScreen(mode = "in", msg = null) {
   $("#root").innerHTML = `<div class="auth"><div class="auth-card">
     <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
     <h1>${mode === "up" ? "Create your account" : mode === "magic" ? "Email me a link" : mode === "reset" ? "Reset password" : "Welcome back"}</h1>
-    <p class="lead">Your routine, planner, tasks and team, on every device.</p>
+    <p class="lead">Private workspace. Sign in to continue.</p>
     ${msg ? `<div class="msg ${msg.ok ? "ok" : "err"}">${esc(msg.text)}</div>` : ""}
     ${demo ? `<form id="fresh-form"><div class="field"><label for="fr-name">Your name</label><input class="inp" id="fr-name" autocomplete="given-name" placeholder="e.g. Munawar" required></div><button class="btn" type="submit">Start my planner</button></form>
     <p class="muted" style="font-size:12.5px;margin:10px 2px 0">Your data is saved on this device. Sign-in and sync across devices switch on once the account server is connected.</p>
     <div class="alt">or</div><button class="btn ghost" data-auth="demo">Explore with sample data</button>` : `
     ${mode === "in" || mode === "up" ? `<div class="seg"><button class="${mode === "in" ? "on" : ""}" data-auth-mode="in">Sign in</button><button class="${mode === "up" ? "on" : ""}" data-auth-mode="up">Create account</button></div>` : ""}
     <form id="auth-form">
-      ${mode === "up" ? `<div class="field"><label for="au-n">Your name</label><input class="inp" id="au-n" autocomplete="name" required></div>` : ""}
+      ${mode === "up" ? `<div class="field"><label for="au-c">Access code</label><input class="inp" id="au-c" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="TB-XXXX-XXXX" required></div><div class="field"><label for="au-n">Your name</label><input class="inp" id="au-n" autocomplete="name" required></div>` : ""}
       <div class="field"><label for="au-e">Email</label><input class="inp" type="email" id="au-e" autocomplete="email" required></div>
       ${mode === "in" || mode === "up" ? `<div class="field"><label for="au-p">Password</label><input class="inp" type="password" id="au-p" autocomplete="${mode === "up" ? "new-password" : "current-password"}" minlength="8" required></div>` : ""}
       <button class="btn" type="submit">${mode === "up" ? "Create account" : mode === "magic" ? "Send sign-in link" : mode === "reset" ? "Send reset link" : "Sign in"}</button>
@@ -1259,7 +1259,7 @@ function authScreen(mode = "in", msg = null) {
     ${ENABLE_GOOGLE ? `<button class="btn ghost" data-auth="google" style="margin-bottom:8px">Continue with Google</button>` : ""}
     ${mode !== "magic" ? `<button class="btn ghost" data-auth-mode="magic">Email me a sign-in link</button>` : `<button class="btn ghost" data-auth-mode="in">Use a password instead</button>`}
     ${mode === "in" ? `<p style="text-align:center;margin:14px 0 0"><button class="link" data-auth-mode="reset">Forgot password?</button></p>` : ""}`}
-    <div class="feature-pills"><span>🔁 Routine</span><span>🗓️ Planner</span><span>✅ Tasks & steps</span><span>🔀 Workflows</span><span>⚡ Automations</span><span>👥 Teams</span><span>💰 Money</span></div>
+    ${demo ? `<div class="feature-pills"><span>🔁 Routine</span><span>🗓️ Planner</span><span>✅ Tasks & steps</span><span>🔀 Workflows</span><span>⚡ Automations</span><span>👥 Teams</span><span>💰 Money</span></div>` : ""}
   </div></div>`;
   $$("[data-auth-mode]").forEach(b => b.onclick = () => authScreen(b.dataset.authMode));
   $("[data-auth=demo]")?.addEventListener("click", () => api.signIn());
@@ -1271,10 +1271,16 @@ function authScreen(mode = "in", msg = null) {
     const email = $("#au-e").value.trim(), pw = $("#au-p")?.value;
     try {
       if (mode === "in") { await api.signIn(email, pw); location.reload(); }
-      else if (mode === "up") { const live = await api.signUp($("#au-n").value.trim(), email, pw); if (live) location.reload(); else authScreen("in", { ok: true, text: "Check your email to confirm your account, then sign in." }); }
+      else if (mode === "up") { const live = await api.signUp($("#au-n").value.trim(), email, pw, $("#au-c").value.trim().toUpperCase()); if (live) location.reload(); else authScreen("in", { ok: true, text: "Check your email to confirm your account, then sign in." }); }
       else if (mode === "magic") { await api.magic(email); authScreen("magic", { ok: true, text: `We sent a sign-in link to ${email}. Open it on this device.` }); }
       else if (mode === "reset") { await api.reset(email); authScreen("in", { ok: true, text: "If that email has an account, a reset link is on its way." }); }
-    } catch (err) { authScreen(mode, { text: err.message || "Something went wrong." }); }
+    } catch (err) {
+      const m = String(err.message || "");
+      const text = mode === "up" && /database error|access_code|INVALID_ACCESS_CODE/i.test(m) ? "That access code isn't right. Check it and try again."
+        : mode === "magic" && /signups not allowed|not found|otp_disabled/i.test(m) ? "No account uses that email. Create an account with your access code first."
+        : m || "Something went wrong.";
+      authScreen(mode, { text });
+    }
   }, true);
 }
 

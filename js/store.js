@@ -57,13 +57,13 @@ const cloud = {
     return data.session?.user || null;
   },
   async signIn(email, password) { const c = await sbClient(); const { error } = await c.auth.signInWithPassword({ email, password }); if (error) throw error; },
-  async signUp(name, email, password) {
+  async signUp(name, email, password, code) {
     const c = await sbClient();
-    const { data, error } = await c.auth.signUp({ email, password, options: { data: { full_name: name }, emailRedirectTo: location.origin + location.pathname } });
+    const { data, error } = await c.auth.signUp({ email, password, options: { data: { full_name: name, access_code: code }, emailRedirectTo: location.origin + location.pathname } });
     if (error) throw error;
     return !!data.session;
   },
-  async magic(email) { const c = await sbClient(); const { error } = await c.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
+  async magic(email) { const c = await sbClient(); const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
   async google() { const c = await sbClient(); const { error } = await c.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname } }); if (error) throw error; },
   async reset(email) { const c = await sbClient(); const { error } = await c.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname }); if (error) throw error; },
   async signOut() { const c = await sbClient(); await c.auth.signOut(); },
