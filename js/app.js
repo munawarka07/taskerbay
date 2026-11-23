@@ -344,7 +344,7 @@ function taskRow(t, opts = {}) {
   </div>`;
 }
 function quickAdd(id, placeholder) {
-  return `<form class="qa" data-form="quick" autocomplete="off"><label for="${id}" class="sr">New task</label><input id="${id}" data-quick="1" placeholder="${placeholder}" enterkeyhint="done"><button class="btn" type="submit">${I.plus}<span>Add</span></button></form>
+  return `<form class="qa" data-form="quick" autocomplete="off"><label for="${id}" class="sr">New task</label><input id="${id}" data-quick="1" placeholder="${placeholder}" enterkeyhint="done"><button class="btn" type="submit">${I.plus}<span>Add</span></button><button class="btn ghost qa-bulk" type="button" data-action="bulk" title="Paste a list of tasks">☰<span>Bulk</span></button></form>
   <div class="qa-hint" data-hint-for="${id}">${hintFor("")}</div>`;
 }
 function hintFor(v) {
@@ -956,6 +956,75 @@ function chooser() {
   <button data-action="auto-new"><span class="ic g">${I.bolt}</span><b>Automation</b><small>A rule that runs itself</small></button></div>
   ${AI_ON ? `<button class="ai-btn" data-action="capture" style="width:100%;justify-content:center;padding:14px;margin-top:4px"><span class="spark">✨</span>Just say it, Claude sorts it out</button>` : ""}`);
 }
+/* ================= Bulk add: paste many lines, each becomes a task ================= */
+const WORK_RX = /\b(payroll|payslips?|salar(y|ies)|wps|hr|invoices?|clients?|meetings?|reports?|visa|labou?r|mohre|employees?|staff|leaves?|gratuity|offer letters?|contracts?|audit|vat|finance|office|manager|boss|team|project|onboarding|recruit\w*|interview\w*|attendance|overtime|eosb|insurance|emirates id|approval)\b/i;
+const URGENT_RX = /\b(urgent|asap|immediately|important|critical|today itself)\b/i;
+function nextWorkday(from = new Date()) { let d = addDays(from, 1); while (d.getDay() === 0 || d.getDay() === 6) d = addDays(d, 1); return dkey(d); } // UAE weekend: Sat & Sun
+function splitBulk(text) {
+  let lines = text.replace(/\r/g, "").split(/\n+/);
+  if (lines.filter(l => l.trim()).length === 1) { const one = lines.join(" "); lines = one.includes(";") ? one.split(";") : one.split(/(?<=[.!?])\s+(?=[A-Z0-9])/); }
+  return lines.map(l => l.replace(/^\s*(?:[-–—•*▪◦·>]+|\d+[.)\]]|\[\s?[xX ]?\s?\]|☐|☑|✅|✔️?)\s*/, "").replace(/\s+/g, " ").trim()).filter(l => l.length > 1);
+}
+function bulkParse(text) {
+  const def = U.bulk.def;
+  return splitBulk(text).map(line => {
+    const it = U.bulk.allowUpdates ? parseIntent(line) : null;
+    if (it) return { on: true, kind: "update", line, task: it.task, stage: it.stage, note: it.note, due_date: it.due_date ?? it.task.due_date, due_time: it.due_time ?? (it.task.due_time ? fmtTime(it.task.due_time) : "") };
+    const q = parseQuick(line.replace(/^\+\s*/, ""));
+    const explicitDate = !!q.due_date, explicitTime = !!q.due_time;
+    return {
+      on: true, kind: "new", line, title: q.title || line,
+      area: /#(w|work|p|personal|proj)/i.test(line) ? q.area : WORK_RX.test(line) ? "Work" : (isTeam() ? "Work" : "Personal"),
+      priority: /![hml123]/i.test(line) ? q.priority : URGENT_RX.test(line) ? "High" : q.priority,
+      due_date: explicitDate ? q.due_date : def.date, due_time: explicitTime ? q.due_time : def.time,
+      auto: !explicitDate || !explicitTime, assignee_id: q.assignee_id, repeat: q.repeat, starred: q.starred
+    };
+  });
+}
+function bulkSheet(prefill = "") {
+  U.bulk = { def: { date: nextWorkday(), time: "09:00" }, rows: [], allowUpdates: true };
+  U.sheet = { type: "bulk" };
+  openSheet(`<h2 id="sheet-title">Bulk add</h2>
+    <p class="muted" style="margin:-4px 0 12px;font-size:13.5px">Paste a list: one task per line (bullets and numbers are fine). Dates and times in a line are picked up. Lines without a date get the default reminder below, and you can change any row.</p>
+    <div class="field"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Prepare December payroll by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
+    <div class="bk-def"><span class="lab">Default reminder for lines without a date</span>
+      <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time"><button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
+      <label class="bk-chk"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label></div>
+    <div id="bk-preview"></div>
+    <div class="sheet-actions"><button class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" data-action="bk-save" id="bk-save" disabled>Add tasks</button></div>`, "tall wide");
+  bulkRefresh(true);
+}
+function bulkRefresh(reparse) {
+  if (!U.bulk) return;
+  if (reparse) U.bulk.rows = bulkParse($("#bk-text")?.value || "");
+  const rows = U.bulk.rows, host = $("#bk-preview"); if (!host) return;
+  const n = rows.filter(r => r.on && r.kind === "new").length, u = rows.filter(r => r.on && r.kind === "update").length;
+  host.innerHTML = rows.length ? `<div class="bk-head"><b>${rows.length} line${rows.length > 1 ? "s" : ""} found</b><span>${n} new${u ? ` · ${u} update${u > 1 ? "s" : ""}` : ""}</span></div>
+    <div class="bk-list">${rows.map((r, i) => r.kind === "update" ? `
+      <div class="bk-row upd ${r.on ? "" : "off"}"><label class="bk-on"><input type="checkbox" data-bk="on" data-i="${i}" ${r.on ? "checked" : ""} aria-label="Include"></label>
+        <div class="bk-main"><span class="bk-tag">Update</span><b>${esc(r.task.title)}</b><small>${r.stage ? `→ ${esc(E.stagesOf(r.task).find(s => s.key === r.stage)?.name || "")} ` : ""}${r.note ? `· 💬 ${esc(r.note)}` : ""}</small></div>
+        <div class="bk-when"><input class="inp" type="date" data-bk="due_date" data-i="${i}" value="${r.due_date || ""}" aria-label="Date"><input class="inp" type="time" data-bk="due_time" data-i="${i}" value="${r.due_time || ""}" aria-label="Time"></div></div>` : `
+      <div class="bk-row ${r.on ? "" : "off"}"><label class="bk-on"><input type="checkbox" data-bk="on" data-i="${i}" ${r.on ? "checked" : ""} aria-label="Include"></label>
+        <div class="bk-main"><input class="inp bk-title" data-bk="title" data-i="${i}" value="${esc(r.title)}" aria-label="Task title">
+          <div class="bk-meta"><select class="inp" data-bk="area" data-i="${i}" aria-label="Area">${AREAS.map(a => `<option ${r.area === a ? "selected" : ""}>${a}</option>`).join("")}</select><select class="inp" data-bk="priority" data-i="${i}" aria-label="Priority">${["High", "Medium", "Low"].map(p => `<option ${r.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select>${r.auto ? `<span class="bk-auto" title="Uses the default reminder">auto</span>` : ""}</div></div>
+        <div class="bk-when"><input class="inp" type="date" data-bk="due_date" data-i="${i}" value="${r.due_date || ""}" aria-label="Date"><input class="inp" type="time" data-bk="due_time" data-i="${i}" value="${r.due_time || ""}" aria-label="Time"></div></div>`).join("")}</div>` : `<p class="muted" style="font-size:13px;margin:8px 2px">Your tasks will appear here as you paste or type.</p>`;
+  const b = $("#bk-save"); if (b) { b.disabled = !(n + u); b.textContent = n + u ? `Add ${n ? `${n} task${n > 1 ? "s" : ""}` : ""}${n && u ? " & " : ""}${u ? `${u} update${u > 1 ? "s" : ""}` : ""}` : "Add tasks"; }
+}
+async function bulkSave() {
+  const rows = U.bulk.rows.filter(r => r.on); if (!rows.length) return;
+  const b = $("#bk-save"); if (b) { b.disabled = true; b.textContent = "Adding…"; }
+  let added = 0, updated = 0;
+  for (const r of rows) {
+    try {
+      if (r.kind === "update") { if (await E.statusUpdate(r.task, { note: r.note, due_date: r.due_date || null, due_time: r.due_time || null, stage: r.stage })) updated++; }
+      else { await E.createTask({ title: r.title.trim() || r.line, area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred }); added++; }
+    } catch (e) { console.error(e); }
+  }
+  closeSheet(); U.bulk = null; buzz(20);
+  toast(`${added ? `Added ${added} task${added > 1 ? "s" : ""}` : ""}${added && updated ? " · " : ""}${updated ? `updated ${updated}` : ""}.`);
+  if (U.view !== "tasks" && U.view !== "today") go("tasks");
+}
+
 function newTaskSheet(preset = {}) {
   U.sheet = { type: "newtask", preset };
   const tk = dkey(), tm = dkey(addDays(new Date(), 1));
@@ -1218,6 +1287,9 @@ document.addEventListener("click", async e => {
     case "demo-fresh": { const ok = U.confirmFresh === true; if (!ok) { U.confirmFresh = true; toast("Tap again to erase everything on this device and start fresh."); setTimeout(() => U.confirmFresh = false, 4000); break; } await api.startFresh(profile(me())?.full_name !== "You" ? profile(me())?.full_name : "", true); break; }
     case "sign-out": { try { const reg = await navigator.serviceWorker?.ready; const sub = await reg?.pushManager?.getSubscription(); if (sub) { await api.removePush(sub.endpoint); await sub.unsubscribe(); } } catch (e) {} await api.signOut(); break; }
     case "chat-del": { const m = S.db.chat_messages.find(x => x.id === id); if (m && m.author_id === me()) { if (U.confirmDel !== id) { U.confirmDel = id; toast("Tap ✕ again to delete this message."); setTimeout(() => { if (U.confirmDel === id) U.confirmDel = null; }, 3000); break; } U.confirmDel = null; await remove("chat_messages", m); } break; }
+    case "bulk": bulkSheet(); setTimeout(() => $("#bk-text")?.focus(), 60); break;
+    case "bk-save": await bulkSave(); break;
+    case "bk-def": { U.bulk.def = { date: nextWorkday(), time: "09:00" }; $("#bk-date").value = U.bulk.def.date; $("#bk-time").value = U.bulk.def.time; bulkRefresh(true); break; }
     case "push-on": await enablePush(); break;
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
@@ -1243,6 +1315,8 @@ document.addEventListener("click", async e => {
 function reopenAuto() { const s = U.sheet; autoSheet(s.a, s.isNew); }
 
 document.addEventListener("change", async e => {
+  if (U.bulk && e.target.dataset?.bk === "on") { const r = U.bulk.rows[+e.target.dataset.i]; if (r) { r.on = e.target.checked; bulkRefresh(false); } return; }
+  if (U.bulk && e.target.id === "bk-upd") { U.bulk.allowUpdates = e.target.checked; bulkRefresh(true); return; }
   const el = e.target;
   if (el.dataset.tfield) { await saveTaskField(el); return; }
   if (el.id === "ft-task") { FT.taskId = el.value; render(); }
@@ -1253,6 +1327,12 @@ document.addEventListener("change", async e => {
 });
 let journalTimer;
 document.addEventListener("input", e => {
+  if (U.bulk && e.target.closest?.("#sheet")) {
+    const el = e.target;
+    if (el.id === "bk-text") { clearTimeout(U.bulkT); U.bulkT = setTimeout(() => bulkRefresh(true), 250); return; }
+    if (el.id === "bk-date" || el.id === "bk-time") { U.bulk.def = { date: $("#bk-date").value || nextWorkday(), time: $("#bk-time").value || "09:00" }; bulkRefresh(true); return; }
+    if (el.dataset.bk && el.dataset.bk !== "on") { const r = U.bulk.rows[+el.dataset.i]; if (r) { r[el.dataset.bk] = el.value; if (el.dataset.bk === "due_date" || el.dataset.bk === "due_time") r.auto = false; } return; }
+  }
   if (e.target.closest?.('[data-form="chat"]')) { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 140) + "px"; }
   const el = e.target;
   if (el.dataset.quick) { const h = $(`[data-hint-for="${el.id}"]`); if (h) h.innerHTML = hintFor(el.value); }
@@ -1415,6 +1495,13 @@ let deferredInstall = null;
 addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; });
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+
+// Pasting several lines into a quick-add box opens Bulk add with them
+document.addEventListener("paste", e => {
+  const el = e.target; if (!el.matches?.("[data-quick]")) return;
+  const txt = e.clipboardData?.getData("text") || "";
+  if (splitBulk(txt).length > 1 && /\n/.test(txt.trim())) { e.preventDefault(); bulkSheet(txt.trim()); }
+});
 
 /* ================= Popup notifications (Web Push) ================= */
 const IS_IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);

@@ -646,3 +646,28 @@ main{min-width:0}
 .chat-send .btn{flex:none;width:44px;height:44px;padding:0;border-radius:50%;display:grid;place-items:center}
 .chat-send .btn svg{width:20px;height:20px}
 .chat-chip{color:var(--accent);font-weight:800}
+
+/* Bulk add */
+.qa .qa-bulk{flex:none;padding:0 12px;gap:6px}
+@media (max-width:520px){.qa .qa-bulk span{display:none}}
+.bk-def{background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:10px 12px;margin:4px 0 12px}
+.bk-def .lab{font-size:12px;font-weight:800;color:var(--muted)}
+.bk-def-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.bk-def-row .inp{flex:1;min-width:120px}
+.bk-chk{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--muted);margin-top:8px}
+.bk-head{display:flex;justify-content:space-between;align-items:baseline;margin:6px 2px 8px;font-size:13.5px}
+.bk-head span{color:var(--muted);font-weight:700;font-size:12.5px}
+.bk-list{display:grid;gap:8px;max-height:46vh;overflow:auto;padding-right:2px}
+.bk-row{display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:start;border:1px solid var(--line);border-radius:14px;padding:10px;background:var(--surface);transition:opacity .2s}
+.bk-row.off{opacity:.45}
+.bk-row.upd{border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 6%,var(--surface))}
+.bk-on{padding-top:9px}.bk-on input{width:18px;height:18px;accent-color:var(--accent)}
+.bk-main{min-width:0}
+.bk-main b{display:block;font-size:14px}.bk-main small{color:var(--muted);font-weight:600;font-size:12.5px}
+.bk-title{width:100%;font-weight:700}
+.bk-meta{display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap}
+.bk-meta select{width:auto;padding:6px 10px;font-size:13px;min-height:0}
+.bk-auto{font-size:11px;font-weight:800;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:99px;padding:2px 8px}
+.bk-tag{display:inline-block;font-size:11px;font-weight:800;text-transform:uppercase;color:var(--accent);margin-bottom:2px}
+.bk-when{grid-column:2;display:flex;gap:6px}
+.bk-when .inp{flex:1;min-width:0;padding:7px 10px;font-size:13.5px;min-height:0}
