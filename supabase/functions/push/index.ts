@@ -1,7 +1,7 @@
 // TaskerBay push sender. Called instantly by database triggers (new alerts, tasks due soon),
 // every minute by pg_cron, and on demand for a test popup.
-// Sends: 9 AM morning summary (in each person's own timezone), task reminders 15 min before
-// the due time, routine reminders at their time, and new Inbox items.
+// Sends: 9 AM morning summary (in each person's own timezone), task reminders at each task's
+// chosen time (default 15 min before), routine reminders at their time, and new Inbox items.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
@@ -22,6 +22,14 @@ function localNow(tz: string) {
   return { day: `${parts.year}-${parts.month}-${parts.day}`, min: (+parts.hour % 24) * 60 + +parts.minute, dow };
 }
 const toMin = (t: string | null) => { if (!t) return null; const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+const dayNum = (d: string) => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) / 864e5;
+const plusDays = (d: string, n: number) => new Date((dayNum(d) + n) * 864e5).toISOString().slice(0, 10);
+// minutes from "now" (in the person's own time zone) until a task is due
+const minsUntil = (now: { day: string; min: number }, date: string, time: string) => (dayNum(date) - dayNum(now.day)) * 1440 + toMin(time)! - now.min;
+function reminderMsg(t: { id: string; title: string; due_time: string; due_date: string; workspace_id: string }, left: number, today: string) {
+  const when = left <= 0 ? "Due now" : left < 60 ? `Due in ${left} min` : left < 1440 && t.due_date === today ? `Due in ${Math.round(left / 60)} h` : "Due tomorrow";
+  return { title: when, body: `${t.title} · ${t.due_date === today ? "" : t.due_date === plusDays(today, 1) ? "tomorrow " : t.due_date + " "}${fmt(t.due_time)}`, url: `${SITE}#task=${t.id}&ws=${t.workspace_id}`, tag: `task-${t.id}` };
+}
 const fmt = (t: string) => { const [h, m] = t.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
 
 async function sendTo(subs: Sub[], msg: Msg) {
@@ -57,12 +65,12 @@ Deno.serve(async (req) => {
   }
 
   const reqBody = await req.json().catch(() => ({}));
-  const inboxUrl = (n: { task_id: string | null; body: string }) => n.task_id ? `${SITE}#task=${n.task_id}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : /^💬/.test(n.body) ? `${SITE}#chat` : `${SITE}#inbox`;
+  const inboxUrl = (n: { task_id: string | null; body: string; workspace_id?: string | null }) => { const w = n.workspace_id ? `&ws=${n.workspace_id}` : ""; return n.task_id ? `${SITE}#task=${n.task_id}${w}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : /^💬/.test(n.body) ? `${SITE}#chat${w}` : `${SITE}#inbox${w}`; };
   const inboxTitle = (body: string) => /^New sign-up request/.test(body) ? "👤 New sign-up request" : "TaskerBay";
 
   // Instant: one Inbox alert, called by the database the moment it is created
   if (reqBody.notification_id) {
-    const { data: n } = await db.from("notifications").select("id, user_id, body, task_id, read, pushed_at").eq("id", reqBody.notification_id).maybeSingle();
+    const { data: n } = await db.from("notifications").select("id, user_id, body, task_id, workspace_id, read, pushed_at").eq("id", reqBody.notification_id).maybeSingle();
     if (!n || n.read || n.pushed_at) return json({ skipped: true });
     const { data: subs } = await db.from("push_subscriptions").select("*").eq("user_id", n.user_id);
     if (!subs?.length) return json({ devices: 0 });
@@ -76,18 +84,17 @@ Deno.serve(async (req) => {
 
   // Instant: a task saved with a time in the next 15 minutes
   if (reqBody.task_id) {
-    const { data: t } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, completed_at, assignee_id, created_by").eq("id", reqBody.task_id).maybeSingle();
-    if (!t || t.reminded_at || t.completed_at || !t.due_time) return json({ skipped: true });
+    const { data: t } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, completed_at, assignee_id, created_by, workspace_id, remind_before").eq("id", reqBody.task_id).maybeSingle();
+    if (!t || t.reminded_at || t.completed_at || !t.due_time || !t.due_date || t.remind_before < 0) return json({ skipped: true });
     const uid = t.assignee_id || t.created_by; if (!uid) return json({ skipped: true });
     const { data: p } = await db.from("profiles").select("timezone").eq("id", uid).maybeSingle();
-    const now = localNow(p?.timezone || "Asia/Dubai"), dm = toMin(t.due_time)!;
-    if (t.due_date !== now.day || now.min < dm - 15 || now.min > dm + 60) return json({ later: true });
+    const now = localNow(p?.timezone || "Asia/Dubai"), left = minsUntil(now, t.due_date, t.due_time);
+    if (left > t.remind_before || left < -60) return json({ later: true });
     const { data: subs } = await db.from("push_subscriptions").select("*").eq("user_id", uid);
     if (!subs?.length) return json({ devices: 0 });
     const { data: claim } = await db.from("tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id).is("reminded_at", null).select("id");
     if (!claim?.length) return json({ skipped: true });
-    const left = dm - now.min;
-    const sent = await sendTo(subs, { title: left > 0 ? `Due in ${left} min` : "Due now", body: `${t.title} · ${fmt(t.due_time)}`, url: `${SITE}#task=${t.id}`, tag: `task-${t.id}` });
+    const sent = await sendTo(subs, reminderMsg(t, left, now.day));
     return json({ sent });
   }
 
@@ -105,32 +112,33 @@ Deno.serve(async (req) => {
     const first = (p.full_name || "").split(" ")[0];
 
     // Open tasks that belong to this person
-    const { data: tasks } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, assignee_id, created_by")
-      .is("completed_at", null).not("due_date", "is", null).lte("due_date", now.day)
+    const { data: tasks } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, assignee_id, created_by, workspace_id, remind_before")
+      .is("completed_at", null).not("due_date", "is", null).lte("due_date", plusDays(now.day, 2))
       .or(`assignee_id.eq.${p.id},and(assignee_id.is.null,created_by.eq.${p.id})`);
     const list = tasks || [];
 
     // 1) Morning summary at 9 AM local time
     if (now.min >= 540 && now.min < 600 && p.last_digest_on !== now.day) {
       const due = list.filter(t => t.due_date === now.day), late = list.filter(t => t.due_date < now.day);
+      const tomorrow = list.filter(t => t.due_date === plusDays(now.day, 1)).length;
       const { data: rItems } = await db.from("routine_items").select("id, days").eq("user_id", p.id).eq("archived", false);
       const todays = (rItems || []).filter(r => (r.days || []).includes(now.dow));
       const timed = due.filter(t => t.due_time).sort((a, b) => a.due_time.localeCompare(b.due_time));
-      const bits = [`${due.length} due today`]; if (late.length) bits.push(`${late.length} overdue`); if (todays.length) bits.push(`${todays.length} routines`);
+      const bits = [`${due.length} due today`]; if (late.length) bits.push(`${late.length} overdue`); if (todays.length) bits.push(`${todays.length} routines`); if (tomorrow) bits.push(`${tomorrow} tomorrow`);
       const next = timed[0] ? ` First: ${timed[0].title} at ${fmt(timed[0].due_time)}.` : due[0] ? ` Start with: ${due[0].title}.` : " Plan your day in TaskerBay.";
       if (await sendTo(mine, { title: `Good morning${first ? ", " + first : ""} ☀️`, body: bits.join(" · ") + "." + next, tag: "digest" })) {
         await db.from("profiles").update({ last_digest_on: now.day }).eq("id", p.id); stats.digests++;
       }
     }
 
-    // 2) Task reminders: 15 minutes before the due time (and up to an hour after, if missed)
+    // 2) Task reminders: at each task's chosen time before it's due (and up to an hour after, if missed)
     for (const t of list) {
-      const dm = toMin(t.due_time); if (dm === null || t.reminded_at || t.due_date !== now.day) continue;
-      if (now.min >= dm - 15 && now.min <= dm + 60) {
+      if (!t.due_time || t.reminded_at || t.remind_before < 0) continue;
+      const left = minsUntil(now, t.due_date, t.due_time);
+      if (left <= t.remind_before && left >= -60) {
         const { data: claim } = await db.from("tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id).is("reminded_at", null).select("id");
         if (!claim?.length) continue;
-        const left = dm - now.min;
-        await sendTo(mine, { title: left > 0 ? `Due in ${left} min` : "Due now", body: `${t.title} · ${fmt(t.due_time)}`, url: `${SITE}#task=${t.id}`, tag: `task-${t.id}` }); stats.tasks++;
+        await sendTo(mine, reminderMsg(t, left, now.day)); stats.tasks++;
       }
     }
 
@@ -146,7 +154,7 @@ Deno.serve(async (req) => {
     }
 
     // 4) New Inbox items (assignments, comments, automations)
-    const { data: notes } = await db.from("notifications").select("id, body, task_id").eq("user_id", p.id).is("pushed_at", null).eq("read", false)
+    const { data: notes } = await db.from("notifications").select("id, body, task_id, workspace_id").eq("user_id", p.id).is("pushed_at", null).eq("read", false)
       .gte("created_at", new Date(Date.now() - 6 * 3600e3).toISOString()).order("created_at").limit(5);
     if (notes?.length) {
       const { data: claimed } = await db.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notes.map(n => n.id)).is("pushed_at", null).select("id");

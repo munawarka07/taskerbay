@@ -471,3 +471,8 @@ alter table public.push_subscriptions enable row level security;
 -- rescheduled close to now -> {task_id}). pg_cron 'taskerbay-push' now runs every minute for time-based
 -- reminders and the 9 AM summary. The function claims a row (pushed_at / reminded_at) before sending, so nothing
 -- is sent twice.
+
+-- v6 (Nov 2026): tasks.remind_before (minutes before due; -1 none, 0 at time, 5/15/30/60/120/1440), reminders can fire
+-- the day before. Popup links carry the workspace (#task=<id>&ws=<ws>). Private storage bucket "backups" (no
+-- policies = no app access) filled nightly at 03:00 Dubai by Edge Function "backup" (pg_cron 'taskerbay-backup'),
+-- 30 days kept; the admin downloads via the same function (public.is_site_admin(uid), service_role only).

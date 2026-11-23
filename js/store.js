@@ -140,6 +140,13 @@ const cloud = {
     return data?.result;
   },
   async updateProfile(patch) { await this.update("profiles", { id: S.user.id }, patch); },
+  async taskWorkspace(id) { const c = await sbClient(); const { data } = await c.from("tasks").select("workspace_id").eq("id", id).maybeSingle(); return data?.workspace_id || null; },
+  async downloadBackup(fresh) {
+    const c = await sbClient(); const { data: { session } } = await c.auth.getSession();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/backup`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY }, body: JSON.stringify(fresh ? { action: "now" } : {}) });
+    if (!r.ok) { let m = "Couldn't download the backup."; try { m = (await r.json()).error || m; } catch (e) {} throw new Error(m); }
+    return { blob: await r.blob(), name: r.headers.get("X-Backup-Name") || `taskerbay-${new Date().toISOString().slice(0, 10)}-now.json` };
+  },
   async refresh() { const ws = S.wsId; await this.loadAll(); if (ws && S.db.workspaces.some(w => w.id === ws)) await this.loadWorkspace(ws); emit(); },
   async savePush(sub) { const c = await sbClient(); const { error } = await c.from("push_subscriptions").upsert({ ...sub, user_id: S.user.id }, { onConflict: "endpoint" }); if (error) throw error; },
   async removePush(endpoint) { const c = await sbClient(); await c.from("push_subscriptions").delete().eq("endpoint", endpoint); },

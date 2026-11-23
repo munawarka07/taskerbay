@@ -610,6 +610,7 @@ function refreshTaskSheet(first) {
     <div class="fgrid">
       <div class="field"><label for="tf-due">Due date</label><input class="inp" type="date" id="tf-due" data-tfield="due_date" value="${t.due_date || ""}"></div>
       <div class="field"><label for="tf-time">Time</label><input class="inp" type="time" id="tf-time" data-tfield="due_time" value="${fmtTime(t.due_time)}"></div>
+      <div class="field"><label for="tf-rem">Reminder ${t.due_time ? "" : `<small class="muted">(set a time)</small>`}</label>${remindSelect("tf-rem", t.remind_before, `data-tfield="remind_before"`)}</div>
       <div class="field"><label for="tf-pri">Priority</label><select class="inp" id="tf-pri" data-tfield="priority">${["High", "Medium", "Low"].map(p => `<option ${t.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select></div>
       <div class="field"><label for="tf-area">Area</label><select class="inp" id="tf-area" data-tfield="area">${AREAS.map(a => `<option ${t.area === a ? "selected" : ""}>${a}</option>`).join("")}</select></div>
       <div class="field"><label for="tf-wf">Workflow</label><select class="inp" id="tf-wf" data-tfield="workflow_id">${E.workflows().map(w => `<option value="${w.id}" ${w.id === wf?.id ? "selected" : ""}>${esc(w.icon)} ${esc(w.name)}</option>`).join("")}</select></div>
@@ -654,6 +655,7 @@ async function saveTaskField(el) {
   if (f === "title") { v = v.trim(); if (!v) { el.value = t.title; return; } }
   if (f === "due_date" || f === "due_time" || f === "assignee_id" || f === "workflow_id") v = v || null;
   if (f === "estimate_min") v = v === "" ? null : Math.max(0, parseInt(v, 10) || 0);
+  if (f === "remind_before") { v = parseInt(v, 10); if ((t.remind_before ?? 15) === v) return; }
   if ((t[f] ?? null) === v || (f === "due_time" && fmtTime(t[f]) === (v || ""))) return;
   await E.changeTask(t, { [f]: v });
 }
@@ -936,6 +938,7 @@ function vSettings() {
       <form data-form="profile"><div class="field"><label for="pf-name">Your name</label><input class="inp" id="pf-name" value="${esc(p.full_name || "")}"></div><button class="btn" type="submit">Save</button></form></div>
     ${accessCard()}
     ${pushCard()}
+    ${backupCard()}
     <div class="card"><div class="card-h"><h2>Appearance</h2></div><div class="seg">${THEMES.map(t => `<button class="${theme === t ? "on" : ""}" data-action="set-theme" data-v="${t}">${t === "auto" ? "Auto" : t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div></div>
     <div class="card"><div class="card-h"><h2>Install on your phone</h2></div><ol class="muted" style="margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px">
       <li><b>iPhone:</b> open this page in Safari → Share → <b>Add to Home Screen</b>.</li><li><b>Android:</b> open in Chrome → ⋮ menu → <b>Install app</b>.</li><li>Sign in with the same account on every device. Everything syncs live.</li></ol>
@@ -993,7 +996,7 @@ function bulkSheet(prefill = "") {
     <p class="muted" style="margin:-4px 0 12px;font-size:13.5px">Paste a list: one task per line (bullets and numbers are fine). Dates and times in a line are picked up. Lines without a date get the default reminder below, and you can change any row.</p>
     <div class="field"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Prepare December payroll by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
     <div class="bk-def"><span class="lab">Default reminder for lines without a date</span>
-      <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time"><button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
+      <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time">${remindSelect("bk-rem", 15, 'aria-label="Reminder for all"')}<button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
       <label class="bk-chk"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label></div>
     <div id="bk-preview"></div>
     <div class="sheet-actions"><button class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" data-action="bk-save" id="bk-save" disabled>Add tasks</button></div>`, "tall wide");
@@ -1022,7 +1025,7 @@ async function bulkSave() {
   for (const r of rows) {
     try {
       if (r.kind === "update") { if (await E.statusUpdate(r.task, { note: r.note, due_date: r.due_date || null, due_time: r.due_time || null, stage: r.stage })) updated++; }
-      else { await E.createTask({ title: r.title.trim() || r.line, area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred }); added++; }
+      else { await E.createTask({ title: r.title.trim() || r.line, remind_before: parseInt($("#bk-rem")?.value ?? "15", 10), area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred }); added++; }
     } catch (e) { console.error(e); }
   }
   closeSheet(); U.bulk = null; buzz(20);
@@ -1030,6 +1033,8 @@ async function bulkSave() {
   if (U.view !== "tasks" && U.view !== "today") go("tasks");
 }
 
+const REMIND_OPTS = [[-1, "No reminder"], [0, "At the due time"], [5, "5 min before"], [15, "15 min before"], [30, "30 min before"], [60, "1 hour before"], [120, "2 hours before"], [1440, "1 day before"]];
+const remindSelect = (id, val, attrs = "") => `<select class="inp" id="${id}" ${attrs}>${REMIND_OPTS.map(([v, l]) => `<option value="${v}" ${(val ?? 15) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
 function newTaskSheet(preset = {}) {
   U.sheet = { type: "newtask", preset };
   const tk = dkey(), tm = dkey(addDays(new Date(), 1));
@@ -1037,6 +1042,7 @@ function newTaskSheet(preset = {}) {
   <form data-form="newtask">
     <div class="field"><label for="nt-title">Task</label><input class="inp" id="nt-title" required autofocus placeholder="What needs doing? Try: Payroll review fri 3pm !high"></div>
     <div class="field"><span class="lab">Due</span><div class="picks" data-quickdue><button type="button" class="pick ${preset.due_date === tk ? "on" : ""}" data-v="${tk}">Today</button><button type="button" class="pick ${preset.due_date === tm ? "on" : ""}" data-v="${tm}">Tomorrow</button><button type="button" class="pick ${!preset.due_date ? "on" : ""}" data-v="">No date</button></div><input class="inp" type="date" id="nt-due" value="${preset.due_date || ""}" aria-label="Due date" style="margin-top:6px"></div>
+    <div class="fgrid" style="margin:0 0 4px"><div class="field"><label for="nt-time">Time (optional)</label><input class="inp" type="time" id="nt-time"></div><div class="field"><label for="nt-rem">Reminder</label>${remindSelect("nt-rem", 15)}</div></div>
     <div class="fgrid" style="margin-top:0">
       <div class="field"><label for="nt-wf">Workflow</label><select class="inp" id="nt-wf">${E.workflows().map(w => `<option value="${w.id}" ${(preset.workflow_id || E.defaultWorkflow()?.id) === w.id ? "selected" : ""}>${esc(w.icon)} ${esc(w.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="nt-area">Area</label><select class="inp" id="nt-area">${AREAS.map(a => `<option ${(preset.area || (isTeam() ? "Work" : "Personal")) === a ? "selected" : ""}>${a}</option>`).join("")}</select></div>
@@ -1295,6 +1301,12 @@ document.addEventListener("click", async e => {
     case "bulk": bulkSheet(); setTimeout(() => $("#bk-text")?.focus(), 60); break;
     case "bk-save": await bulkSave(); break;
     case "bk-def": { U.bulk.def = { date: nextWorkday(), time: "09:00" }; $("#bk-date").value = U.bulk.def.date; $("#bk-time").value = U.bulk.def.time; bulkRefresh(true); break; }
+    case "backup-dl": case "backup-now": {
+      a.disabled = true; const label = a.textContent; a.textContent = "Preparing…";
+      try { const { blob, name } = await api.downloadBackup(act === "backup-now"); const url = URL.createObjectURL(blob); const l = document.createElement("a"); l.href = url; l.download = name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000); toast(`Downloaded ${name}. Keep it somewhere private.`); }
+      catch (e) { toast(e.message); }
+      a.disabled = false; a.textContent = label; break;
+    }
     case "push-on": await enablePush(); break;
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
@@ -1387,7 +1399,8 @@ document.addEventListener("submit", async e => {
     const raw = $("#nt-title").value.trim(); if (!raw) return;
     const p = parseQuick(raw), wfId = $("#nt-wf").value, wf = S.db.workflows.find(w => w.id === wfId);
     const preset = U.sheet.preset || {};
-    const nt = await E.createTask({ title: p.title || raw, due_date: $("#nt-due").value || p.due_date, due_time: p.due_time, area: $("#nt-area").value, priority: raw.includes("!") ? p.priority : $("#nt-pri").value, workflow_id: wfId, stage: preset.stage && wf?.stages.some(s => s.key === preset.stage) ? preset.stage : E.firstStage(wf), assignee_id: $("#nt-as")?.value || p.assignee_id || me(), starred: p.starred, repeat: p.repeat });
+    const ntTime = $("#nt-time")?.value || p.due_time || null, ntRem = parseInt($("#nt-rem")?.value ?? "15", 10);
+    const nt = await E.createTask({ title: p.title || raw, due_date: $("#nt-due").value || p.due_date || (ntTime ? dkey() : null), due_time: ntTime, remind_before: ntRem, area: $("#nt-area").value, priority: raw.includes("!") ? p.priority : $("#nt-pri").value, workflow_id: wfId, stage: preset.stage && wf?.stages.some(s => s.key === preset.stage) ? preset.stage : E.firstStage(wf), assignee_id: $("#nt-as")?.value || p.assignee_id || me(), starred: p.starred, repeat: p.repeat });
     for (const s of $("#nt-steps").value.split("\n").map(x => x.trim()).filter(Boolean)) await E.createTask({ title: s, parent_id: nt.id, area: nt.area, assignee_id: nt.assignee_id }, 1);
     closeSheet(); buzz(15); toast("Task created.");
   }
@@ -1558,10 +1571,20 @@ function pushBanner() {
   return `<div class="push-banner"><span class="ic">🔔</span><div><b>Get your 9 AM summary and reminders</b><small>${st === "ios-install" ? "Add TaskerBay to your Home Screen first, then turn on popups." : "Popups arrive even when TaskerBay is closed."}</small></div>${st === "default" ? `<button class="btn" data-action="push-on">Turn on</button>` : ""}<button class="x" data-action="push-banner-x" aria-label="Dismiss">✕</button></div>`;
 }
 if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => { if (e.data?.type === "open" && e.data.url) { const h = new URL(e.data.url).hash; if (h) { if (location.hash === h) openFromHash(); else location.hash = h; } } });
+// Links from popups: "#task=<id>&ws=<workspace>", "#chat&ws=<workspace>", "#inbox&ws=..."
 function openFromHash() {
-  const h = location.hash.slice(1);
-  if (h.startsWith("task=")) { const id = h.slice(5); history.replaceState(null, "", "#" + U.view); if (task(id)) openTask(id); else toast("That task isn't in this workspace."); return true; }
-  return false;
+  const h = location.hash.slice(1); if (!h) return false;
+  const parts = h.split("&"), head = parts[0], q = Object.fromEntries(parts.slice(1).map(x => x.split("=")));
+  const isTask = head.startsWith("task="), view = isTask ? null : head;
+  if (!isTask && !q.ws) return false;
+  (async () => {
+    let wsId = q.ws;
+    if (isTask && !wsId && !task(head.slice(5))) { try { wsId = await api.taskWorkspace?.(head.slice(5)); } catch (e) {} }
+    if (wsId && wsId !== S.wsId && S.db.workspaces.some(w => w.id === wsId)) await switchWs(wsId);
+    if (isTask) { history.replaceState(null, "", "#" + U.view); const id = head.slice(5); if (task(id)) openTask(id); else toast("That task was deleted or you no longer have access to it."); }
+    else if (VIEWS[view]) go(view);
+  })();
+  return true;
 }
 
 /* ================= Chat (task chats + team chat) ================= */
@@ -1636,6 +1659,12 @@ function accessCard() {
     ${U.access === "loading" ? `<p class="muted" style="margin:0">Loading…</p>` : U.access?.error ? `<p class="muted" style="margin:0">${esc(U.access.error)}</p>` : `
     ${pend.length ? pend.map(x => row(x, true)).join("") : `<p class="muted" style="margin:0 0 8px;font-size:14px">No one is waiting. When someone signs up with your access code, they'll appear here and you'll get an alert.</p>`}
     ${ok.length ? `<details class="acc-ok"><summary>People with access (${ok.length})</summary>${ok.map(x => row(x, false)).join("")}</details>` : ""}`}</div>`;
+}
+function backupCard() {
+  if (!U.isAdmin) return "";
+  return `<div class="card"><div class="card-h"><h2>🗄️ Backups</h2></div>
+    <p class="muted" style="margin:0 0 12px;font-size:14px">A full copy of all TaskerBay data is saved <b>every night at 3 AM</b> in a private, locked store that only you (the admin) can download. The last 30 days are kept.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-action="backup-dl">⬇ Download latest backup</button><button class="btn ghost" data-action="backup-now">Download a fresh copy now</button></div></div>`;
 }
 const avatarText = n => `<span class="av-t">${esc(String(n || "?").trim().charAt(0).toUpperCase())}</span>`;
 
