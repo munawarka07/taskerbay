@@ -6,11 +6,14 @@ export const PK = {
   workflows: ["id"], tasks: ["id"], task_updates: ["id"], notifications: ["id"], automations: ["id"],
   routine_items: ["id"], routine_logs: ["item_id", "day"], journal: ["user_id", "day"], focus_sessions: ["id"],
   expenses: ["id"], budgets: ["user_id", "category"],
-  chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"]
+  chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"],
+  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"]
 };
 const TABLES = Object.keys(PK);
 const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages"];
 const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads"];
+// shared money funds: visible to the creator and the people added to them (the server decides who sees what)
+const FUND_TABLES = ["fund_projects", "fund_members", "fund_entries"];
 
 export const S = {
   mode: SUPABASE_URL && SUPABASE_ANON_KEY ? "cloud" : "demo",
@@ -83,7 +86,10 @@ const cloud = {
       q("expenses", x => x.eq("user_id", uid).gte("date", since(800))),
       q("budgets", x => x.eq("user_id", uid)),
       q("notifications", x => x.eq("user_id", uid).order("created_at", { ascending: false }).limit(150)),
-      q("chat_reads", x => x.eq("user_id", uid))
+      q("chat_reads", x => x.eq("user_id", uid)),
+      q("fund_projects", x => x.order("created_at", { ascending: false })),
+      q("fund_members", x => x.order("created_at")),
+      q("fund_entries", x => x.order("date", { ascending: false }).limit(5000))
     ]);
   },
   async loadWorkspace(ws) {
@@ -113,8 +119,10 @@ const cloud = {
     };
     WS_TABLES.forEach(t => channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `workspace_id=eq.${ws}` }, apply(t)));
     USER_TABLES.forEach(t => channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `user_id=eq.${S.user.id}` }, apply(t)));
+    const fundApply = t => p => { apply(t)(p); if (t !== "fund_projects" && p.new?.project_id && !S.db.fund_projects.some(f => f.id === p.new.project_id)) this.reloadFunds(); };
+    FUND_TABLES.forEach(t => channel.on("postgres_changes", { event: "INSERT", schema: "public", table: t }, fundApply(t)).on("postgres_changes", { event: "UPDATE", schema: "public", table: t }, fundApply(t)));
     // Deletions can't be filtered by Supabase, so listen to them separately (only the row's id is sent)
-    [...WS_TABLES, ...USER_TABLES].forEach(t => channel.on("postgres_changes", { event: "DELETE", schema: "public", table: t }, p => {
+    [...WS_TABLES, ...USER_TABLES, ...FUND_TABLES].forEach(t => channel.on("postgres_changes", { event: "DELETE", schema: "public", table: t }, p => {
       if (p.old && PK[t].every(k => p.old[k] != null)) { localRemove(t, p.old); emit(); }
     }));
     channel.subscribe(status => { S.online = status === "SUBSCRIBED"; emit(); });
@@ -147,6 +155,12 @@ const cloud = {
     const r = await fetch(`${SUPABASE_URL}/functions/v1/backup`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY }, body: JSON.stringify(fresh ? { action: "now" } : {}) });
     if (!r.ok) { let m = "Couldn't download the backup."; try { m = (await r.json()).error || m; } catch (e) {} throw new Error(m); }
     return { blob: await r.blob(), name: r.headers.get("X-Backup-Name") || `taskerbay-${new Date().toISOString().slice(0, 10)}-now.json` };
+  },
+  async reloadFunds() {
+    const c = await sbClient();
+    const [a, b, d] = await Promise.all([c.from("fund_projects").select("*").order("created_at", { ascending: false }), c.from("fund_members").select("*").order("created_at"), c.from("fund_entries").select("*").order("date", { ascending: false }).limit(5000)]);
+    if (!a.error) S.db.fund_projects = a.data || []; if (!b.error) S.db.fund_members = b.data || []; if (!d.error) S.db.fund_entries = d.data || [];
+    emit();
   },
   async refresh() { const ws = S.wsId; await this.loadAll(); if (ws && S.db.workspaces.some(w => w.id === ws)) await this.loadWorkspace(ws); emit(); },
   async savePush(sub) { const c = await sbClient(); const { error } = await c.from("push_subscriptions").upsert({ ...sub, user_id: S.user.id }, { onConflict: "endpoint" }); if (error) throw error; },
@@ -251,6 +265,9 @@ const demo = {
     const uid = demoDB._uid;
     S.db.workspaces = demoDB.workspaces.filter(w => demoDB.workspace_members.some(m => m.workspace_id === w.id && m.user_id === uid));
     USER_TABLES.forEach(t => { S.db[t] = demoDB[t].filter(r => r.user_id === uid).map(r => ({ ...r })); });
+    FUND_TABLES.forEach(t => { demoDB[t] = demoDB[t] || []; });
+    const fp = new Set(demoDB.fund_projects.filter(f => f.owner_id === uid || demoDB.fund_members.some(m => m.project_id === f.id && m.user_id === uid)).map(f => f.id));
+    FUND_TABLES.forEach(t => { S.db[t] = demoDB[t].filter(r => fp.has(t === "fund_projects" ? r.id : r.project_id)).map(r => ({ ...r })); });
   },
   async loadWorkspace(ws) {
     WS_TABLES.forEach(t => { S.db[t] = demoDB[t].filter(r => r.workspace_id === ws).map(r => JSON.parse(JSON.stringify(r))); });
@@ -258,11 +275,20 @@ const demo = {
     S.db.profiles = demoDB.profiles.filter(p => ids.has(p.id)).map(p => ({ ...p }));
     if (!this._listening) { this._listening = true; addEventListener("storage", e => { if (e.key === DKEY) { demoLoad(); this.loadAll().then(() => this.loadWorkspace(S.wsId)).then(emit); } }); }
   },
-  async insert(t, row) { demoDB[t].push(JSON.parse(JSON.stringify(row))); dsave(); },
-  async upsert(t, row) { const i = demoDB[t].findIndex(match(t, row)); if (i >= 0) demoDB[t][i] = { ...demoDB[t][i], ...row }; else demoDB[t].push({ ...row }); dsave(); },
+  async insert(t, row) {
+    demoDB[t] = demoDB[t] || []; demoDB[t].push(JSON.parse(JSON.stringify(row)));
+    if (t === "fund_projects") { // like the server: the creator is a person in their own fund
+      const p = demoDB.profiles.find(x => x.id === row.owner_id), m = { id: uuid(), project_id: row.id, user_id: row.owner_id, name: p?.full_name || "Me", limit_amount: null, created_at: new Date().toISOString() };
+      demoDB.fund_members.push(m); localUpsert("fund_members", m);
+    }
+    dsave();
+  },
+  async upsert(t, row) { demoDB[t] = demoDB[t] || []; const i = demoDB[t].findIndex(match(t, row)); if (i >= 0) demoDB[t][i] = { ...demoDB[t][i], ...row }; else demoDB[t].push({ ...row }); dsave(); },
   async update(t, row, patch) { demoDB[t].forEach((r, i) => { if (match(t, row)(r)) demoDB[t][i] = { ...r, ...patch }; }); dsave(); },
   async remove(t, row) {
     demoDB[t] = demoDB[t].filter(r => !match(t, row)(r));
+    if (t === "fund_projects") { demoDB.fund_members = (demoDB.fund_members || []).filter(m => m.project_id !== row.id); demoDB.fund_entries = (demoDB.fund_entries || []).filter(x => x.project_id !== row.id); }
+    if (t === "fund_members") demoDB.fund_entries = (demoDB.fund_entries || []).filter(x => x.member_id !== row.id);
     if (t === "tasks") { // cascade like the database does
       const gone = new Set([row.id]); let grew = true;
       while (grew) { grew = false; demoDB.tasks.forEach(x => { if (x.parent_id && gone.has(x.parent_id) && !gone.has(x.id)) { gone.add(x.id); grew = true; } }); }
@@ -278,6 +304,7 @@ const demo = {
       demoDB.workspace_members.push({ workspace_id: id, user_id: demoDB._uid, role: "owner" });
       demoSeedWorkspace(demoDB, id); dsave(); return id;
     }
+    if (name === "fund_find_user") { const p = demoDB.profiles.find(x => (x.email || "").toLowerCase() === String(args.addr || "").trim().toLowerCase()); return p ? [{ id: p.id, full_name: p.full_name }] : []; }
     return null;
   },
   async ai() { throw new Error("AI needs the live version. In demo mode there is no server to talk to Claude."); },

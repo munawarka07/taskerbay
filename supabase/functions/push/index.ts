@@ -72,8 +72,8 @@ Deno.serve(async (req) => {
   }
 
   const reqBody = await req.json().catch(() => ({}));
-  const inboxUrl = (n: { task_id: string | null; body: string; workspace_id?: string | null }) => { const w = n.workspace_id ? `&ws=${n.workspace_id}` : ""; return n.task_id ? `${SITE}#task=${n.task_id}${w}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : /^💬/.test(n.body) ? `${SITE}#chat${w}` : `${SITE}#inbox${w}`; };
-  const inboxTitle = (body: string) => /^New sign-up request/.test(body) ? "👤 New sign-up request" : "TaskerBay";
+  const inboxUrl = (n: { task_id: string | null; body: string; workspace_id?: string | null }) => { const w = n.workspace_id ? `&ws=${n.workspace_id}` : ""; return n.task_id ? `${SITE}#task=${n.task_id}${w}` : /^New sign-up request/.test(n.body) ? `${SITE}#settings` : /^💬/.test(n.body) ? `${SITE}#chat${w}` : /^💰/.test(n.body) ? `${SITE}#funds` : `${SITE}#inbox${w}`; };
+  const inboxTitle = (body: string) => /^New sign-up request/.test(body) ? "👤 New sign-up request" : /^💰/.test(body) ? "💰 TaskerBay Funds" : "TaskerBay";
 
   // Instant: one Inbox alert, called by the database the moment it is created
   if (reqBody.notification_id) {

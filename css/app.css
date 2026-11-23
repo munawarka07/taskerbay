@@ -694,3 +694,73 @@ main{min-width:0}
 .upd-preview:empty{display:none}
 .done-chip{color:var(--green,#2E9B5B);font-weight:800}.next-chip{color:var(--accent);font-weight:800}
 .status-form .upd-grid{grid-template-columns:1fr 1fr}
+
+/* ===== Free time (home) ===== */
+.fdays{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:12px}
+.fdays button{display:grid;justify-items:center;gap:1px;padding:7px 2px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);transition:all .2s}
+.fdays button small{font-size:10.5px;font-weight:700;color:var(--muted)}
+.fdays button b{font-size:16px}
+.fdays button em{font-style:normal;font-size:10px;font-weight:700;color:var(--green)}
+.fdays button.wkend{opacity:.75}
+.fdays button.on{background:var(--accent);border-color:var(--accent);color:#fff;opacity:1}
+.fdays button.on small,.fdays button.on em{color:#fff}
+.fbar{position:relative;height:22px;border-radius:8px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.fbar i{position:absolute;top:0;bottom:0}
+.fbar i.free{background:var(--green);opacity:.85}
+.fbar i.gap{background:var(--green);opacity:.3}
+.fbar i.busy{background:var(--accent);border-left:1px solid var(--surface);border-right:1px solid var(--surface)}
+.fbar i.busy.quick{background:var(--gold)}
+.fbar i.past{background:repeating-linear-gradient(45deg,var(--surface-2),var(--surface-2) 4px,var(--line) 4px,var(--line) 6px)}
+.fticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-weight:700;margin:4px 2px 8px}
+.flegend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);font-weight:700;margin-bottom:10px;align-items:center}
+.flegend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+.flegend i.free{background:var(--green)}.flegend i.busy{background:var(--accent)}.flegend i.busy.quick{background:var(--gold)}
+.slots{display:grid;gap:6px}
+.slot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-radius:12px;background:var(--green-soft);border:1px solid transparent}
+.slot b{display:block;font-size:14.5px}
+.slot small{color:var(--green);font-weight:700;font-size:12px}
+.slot .btn{padding:6px 12px}
+.fbusy,.fset{margin-top:10px;font-size:13px}
+.fbusy summary,.fset summary{cursor:pointer;font-weight:700;color:var(--muted)}
+.fbusy div{display:grid;grid-template-columns:76px 1fr auto;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.fbusy small{color:var(--muted)}
+.fact{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+
+/* ===== Funds ===== */
+.badge{background:var(--red);color:#fff;font-size:11px;font-weight:800;border-radius:999px;padding:1px 7px;margin-left:4px}
+.chip.ok{background:var(--green-soft);color:var(--green);border-color:transparent}
+.chip.bad{background:var(--red-soft);color:var(--red);border-color:transparent}
+.chip.wait{background:var(--gold-soft);color:var(--orange);border-color:transparent}
+.flag{color:var(--red)!important;font-weight:700;font-size:13px}
+.fund-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px}
+.fund-card{display:grid;gap:10px;text-align:left;width:100%}
+.fund-card.closed{opacity:.7}
+.fc-h{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.fc-h b{font-size:17px;margin-right:auto}
+.fc-d{margin:0;font-size:13px}
+.fc-n{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.fc-n small{display:block;font-size:11px;color:var(--muted);font-weight:700}
+.fc-n b{font-size:14px}
+.fc-f{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px}
+.fund-stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.fund-stats .v{font-size:24px}
+.fund-wait{border-color:var(--gold)}
+.fw-row{align-items:flex-start;gap:10px}
+.fw-row small{display:block}
+.fw-btns{display:flex;gap:6px;flex-shrink:0}
+.ftable-wrap{overflow-x:auto;margin:0 -4px}
+.ftable{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
+.ftable th{text-align:right;font-size:11.5px;color:var(--muted);font-weight:800;padding:8px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+.ftable td{text-align:right;padding:9px 6px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;white-space:nowrap}
+.ftable th:first-child,.ftable td:first-child{text-align:left;white-space:normal}
+.ftable tbody tr[data-action]{cursor:pointer}
+.ftable tbody tr[data-action]:hover{background:var(--surface-2)}
+.ftable tr.over td{background:var(--red-soft);color:var(--red)}
+.ftable tr.over td b{color:var(--red)}
+.ftable tr.warn td:last-child{color:var(--orange);font-weight:700}
+.ftable tfoot td{font-weight:800;border-bottom:0}
+.fe-row.pending{border-left:3px solid var(--gold)}
+.fe-row.rejected{opacity:.55}
+.fe-row.rejected .amt-in,.fe-row.rejected .amt-out{text-decoration:line-through}
+@media (max-width:560px){.fw-row{flex-wrap:wrap}.fw-btns{width:100%}.fw-btns .btn{flex:1}}
+.fund-filter{max-width:100%;overflow-x:auto;scrollbar-width:none}.fund-filter button{white-space:nowrap}

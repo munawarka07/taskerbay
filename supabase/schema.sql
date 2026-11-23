@@ -479,3 +479,213 @@ alter table public.push_subscriptions enable row level security;
 
 -- v7 (Nov 2026): tasks.due_alerted_at; every task with a time pops up AT its due time ("Due now"), plus an optional
 -- earlier heads-up (remind_before > 0). Default remind_before is now 0. pg_cron 'taskerbay-push' runs every 20 seconds.
+-- TaskerBay v8: Fund tracker (projects / events with a budget, people who collect and spend, owner approval)
+-- The person who creates a fund project is its admin. They add people (TaskerBay users or just a name),
+-- give each a spending limit, and approve every entry other people add.
+
+create table if not exists public.fund_projects (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null check (length(btrim(name)) between 1 and 120),
+  description text not null default '',
+  total_budget numeric(14,2) not null default 0 check (total_budget >= 0),
+  currency text not null default 'AED' check (length(currency) between 1 and 8),
+  status text not null default 'active' check (status in ('active','closed')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.fund_members (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.fund_projects(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  name text not null check (length(btrim(name)) between 1 and 80),
+  limit_amount numeric(14,2) check (limit_amount is null or limit_amount >= 0),
+  created_at timestamptz not null default now(),
+  unique (project_id, user_id)
+);
+create table if not exists public.fund_entries (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.fund_projects(id) on delete cascade,
+  member_id uuid not null references public.fund_members(id) on delete cascade,
+  kind text not null check (kind in ('in','out')),
+  amount numeric(14,2) not null check (amount > 0),
+  title text not null default '',
+  category text not null default 'General',
+  date date not null default current_date,
+  note text not null default '',
+  status text not null default 'pending' check (status in ('pending','approved','rejected')),
+  review_note text not null default '',
+  created_by uuid default auth.uid() references auth.users(id) on delete set null,
+  reviewed_by uuid references auth.users(id) on delete set null,
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists fund_projects_owner_idx on public.fund_projects(owner_id);
+create index if not exists fund_members_project_idx on public.fund_members(project_id);
+create index if not exists fund_members_user_idx on public.fund_members(user_id);
+create index if not exists fund_entries_project_idx on public.fund_entries(project_id, date);
+create index if not exists fund_entries_member_idx on public.fund_entries(member_id);
+create index if not exists fund_entries_created_by_idx on public.fund_entries(created_by);
+create index if not exists fund_entries_reviewed_by_idx on public.fund_entries(reviewed_by);
+
+-- 'owner', 'member' or null for the signed-in person
+create or replace function public.fund_role(p uuid) returns text
+language sql stable security definer set search_path = '' as $$
+  select case when exists (select 1 from public.fund_projects f where f.id = p and f.owner_id = (select auth.uid())) then 'owner'
+              when exists (select 1 from public.fund_members m where m.project_id = p and m.user_id = (select auth.uid())) then 'member' end
+$$;
+revoke all on function public.fund_role(uuid) from public, anon;
+grant execute on function public.fund_role(uuid) to authenticated;
+
+-- find an approved TaskerBay user by exact email, to add them to a fund project
+create or replace function public.fund_find_user(addr text) returns table (id uuid, full_name text)
+language sql stable security definer set search_path = '' as $$
+  select p.id, coalesce(nullif(p.full_name, ''), split_part(p.email, '@', 1))
+  from public.profiles p
+  where (select public.is_approved()) and length(addr) > 3 and lower(p.email) = lower(btrim(addr)) and p.approved
+  limit 1
+$$;
+revoke all on function public.fund_find_user(text) from public, anon;
+grant execute on function public.fund_find_user(text) to authenticated;
+
+alter table public.fund_projects enable row level security;
+alter table public.fund_members enable row level security;
+alter table public.fund_entries enable row level security;
+
+do $$ declare t text; begin
+  foreach t in array array['fund_projects','fund_members','fund_entries'] loop
+    execute format('drop policy if exists "approved only" on public.%I', t);
+    execute format('create policy "approved only" on public.%I as restrictive for all to authenticated using ((select public.is_approved())) with check ((select public.is_approved()))', t);
+    execute format('revoke all on public.%I from anon', t);
+    execute format('revoke truncate, trigger, references on public.%I from authenticated', t);
+  end loop;
+end $$;
+
+drop policy if exists "fp read" on public.fund_projects;
+drop policy if exists "fp insert" on public.fund_projects;
+drop policy if exists "fp update" on public.fund_projects;
+drop policy if exists "fp delete" on public.fund_projects;
+create policy "fp read" on public.fund_projects for select to authenticated using (owner_id = (select auth.uid()) or public.fund_role(id) is not null);
+create policy "fp insert" on public.fund_projects for insert to authenticated with check (owner_id = (select auth.uid()));
+create policy "fp update" on public.fund_projects for update to authenticated using (owner_id = (select auth.uid())) with check (owner_id = (select auth.uid()));
+create policy "fp delete" on public.fund_projects for delete to authenticated using (owner_id = (select auth.uid()));
+
+drop policy if exists "fm read" on public.fund_members;
+drop policy if exists "fm write" on public.fund_members;
+create policy "fm read" on public.fund_members for select to authenticated using (public.fund_role(project_id) is not null);
+create policy "fm write" on public.fund_members for all to authenticated using (public.fund_role(project_id) = 'owner') with check (public.fund_role(project_id) = 'owner');
+
+drop policy if exists "fe read" on public.fund_entries;
+drop policy if exists "fe insert" on public.fund_entries;
+drop policy if exists "fe update owner" on public.fund_entries;
+drop policy if exists "fe update own pending" on public.fund_entries;
+drop policy if exists "fe delete" on public.fund_entries;
+create policy "fe read" on public.fund_entries for select to authenticated using (public.fund_role(project_id) is not null);
+create policy "fe insert" on public.fund_entries for insert to authenticated with check (
+  created_by = (select auth.uid()) and (
+    public.fund_role(project_id) = 'owner'
+    or (status = 'pending' and exists (select 1 from public.fund_members m where m.id = member_id and m.project_id = fund_entries.project_id and m.user_id = (select auth.uid())))));
+create policy "fe update owner" on public.fund_entries for update to authenticated
+  using (public.fund_role(project_id) = 'owner') with check (public.fund_role(project_id) = 'owner');
+create policy "fe update own pending" on public.fund_entries for update to authenticated
+  using (created_by = (select auth.uid()) and status = 'pending')
+  with check (created_by = (select auth.uid()) and status = 'pending'
+    and exists (select 1 from public.fund_members m where m.id = member_id and m.project_id = fund_entries.project_id and m.user_id = (select auth.uid())));
+create policy "fe delete" on public.fund_entries for delete to authenticated
+  using (public.fund_role(project_id) = 'owner' or (created_by = (select auth.uid()) and status = 'pending'));
+
+-- integrity: the person belongs to the same project; closed projects take no new entries from members;
+-- review fields are stamped by the server
+create or replace function private.fund_entry_guard() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare st text; own uuid;
+begin
+  if not exists (select 1 from public.fund_members m where m.id = new.member_id and m.project_id = new.project_id) then
+    raise exception 'That person is not part of this fund';
+  end if;
+  select status, owner_id into st, own from public.fund_projects where id = new.project_id;
+  if st = 'closed' and auth.uid() is distinct from own then raise exception 'This fund is closed'; end if;
+  if tg_op = 'UPDATE' then
+    new.updated_at := now(); new.created_by := old.created_by; new.created_at := old.created_at;
+    if new.status is distinct from old.status then
+      new.reviewed_by := auth.uid(); new.reviewed_at := case when new.status = 'pending' then null else now() end;
+      if new.status = 'pending' then new.reviewed_by := null; end if;
+    else new.reviewed_by := old.reviewed_by; new.reviewed_at := old.reviewed_at; end if;
+  else
+    if new.status <> 'pending' then new.reviewed_by := auth.uid(); new.reviewed_at := now(); else new.reviewed_by := null; new.reviewed_at := null; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists fund_entry_guard on public.fund_entries;
+create trigger fund_entry_guard before insert or update on public.fund_entries for each row execute function private.fund_entry_guard();
+
+create or replace function private.fund_touch() returns trigger language plpgsql set search_path = '' as $$
+begin new.updated_at := now(); if tg_op = 'UPDATE' then new.owner_id := old.owner_id; end if; return new; end $$;
+drop trigger if exists fund_touch on public.fund_projects;
+create trigger fund_touch before update on public.fund_projects for each row execute function private.fund_touch();
+
+-- the creator is always a person in their own fund
+create or replace function private.fund_add_owner() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  insert into public.fund_members (project_id, user_id, name)
+  select new.id, new.owner_id, coalesce(nullif(p.full_name, ''), 'Me') from public.profiles p where p.id = new.owner_id
+  on conflict do nothing;
+  return new;
+end $$;
+drop trigger if exists fund_add_owner on public.fund_projects;
+create trigger fund_add_owner after insert on public.fund_projects for each row execute function private.fund_add_owner();
+
+-- Inbox alerts (they also pop up instantly through the existing notification_push trigger)
+create or replace function private.fund_notify() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare f record; who text; mname text; lim numeric; spent numeric; msg text; amt text;
+begin
+  select * into f from public.fund_projects where id = new.project_id;
+  select name, limit_amount into mname, lim from public.fund_members where id = new.member_id;
+  amt := f.currency || ' ' || to_char(new.amount, 'FM999,999,990.00');
+  if tg_op = 'INSERT' and new.status = 'pending' and new.created_by is distinct from f.owner_id then
+    select coalesce(nullif(full_name, ''), 'Someone') into who from public.profiles where id = new.created_by;
+    msg := format('💰 %s added %s %s (%s) in “%s”. Waiting for your approval.', who, case when new.kind = 'out' then 'a spend of' else 'a collection of' end, amt, coalesce(nullif(new.title, ''), new.category), f.name);
+    if new.kind = 'out' and lim is not null then
+      select coalesce(sum(amount), 0) into spent from public.fund_entries where member_id = new.member_id and kind = 'out' and status <> 'rejected';
+      if spent > lim then msg := msg || format(' ⚠️ %s is over their limit: %s of %s.', mname, to_char(spent, 'FM999,999,990.00'), to_char(lim, 'FM999,999,990.00')); end if;
+    end if;
+    insert into public.notifications (user_id, actor_id, body) values (f.owner_id, new.created_by, msg);
+  elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('approved','rejected')
+        and new.created_by is not null and new.created_by is distinct from new.reviewed_by then
+    msg := format('💰 %s: your %s %s (%s) in “%s”%s', case when new.status = 'approved' then '✅ Approved' else '❌ Rejected' end,
+                  case when new.kind = 'out' then 'spend of' else 'collection of' end, amt, coalesce(nullif(new.title, ''), new.category), f.name,
+                  case when new.review_note <> '' then ' · ' || left(new.review_note, 120) else '' end);
+    insert into public.notifications (user_id, actor_id, body) values (new.created_by, new.reviewed_by, msg);
+  end if;
+  return null;
+end $$;
+drop trigger if exists fund_notify on public.fund_entries;
+create trigger fund_notify after insert or update on public.fund_entries for each row execute function private.fund_notify();
+
+create or replace function private.fund_member_notify() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare f record;
+begin
+  if new.user_id is null or (tg_op = 'UPDATE' and new.user_id is not distinct from old.user_id) then return null; end if;
+  select * into f from public.fund_projects where id = new.project_id;
+  if new.user_id = f.owner_id then return null; end if;
+  insert into public.notifications (user_id, actor_id, body)
+  values (new.user_id, f.owner_id, format('💰 You were added to the fund “%s”%s. Open Money → Funds to add what you collect and spend.', f.name,
+          case when new.limit_amount is not null then format(' with a spending limit of %s %s', f.currency, to_char(new.limit_amount, 'FM999,999,990.00')) else '' end));
+  return null;
+end $$;
+drop trigger if exists fund_member_notify on public.fund_members;
+create trigger fund_member_notify after insert or update on public.fund_members for each row execute function private.fund_member_notify();
+
+revoke all on function private.fund_entry_guard(), private.fund_touch(), private.fund_add_owner(), private.fund_notify(), private.fund_member_notify() from public, anon, authenticated;
+
+do $$ declare t text; begin
+  foreach t in array array['fund_projects','fund_members','fund_entries'] loop
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;

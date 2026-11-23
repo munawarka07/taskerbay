@@ -113,6 +113,16 @@ function parseQuick(text) {
     if (lw === "eom" || (lw === "end" && nx === "of" && (lws[i + 2] === "month" || lws[i + 3] === "month"))) { out.due_date = dkey(new Date(today.getFullYear(), today.getMonth() + 1, 0)); const k = lw === "eom" ? 1 : lws[i + 2] === "month" ? 3 : 4; for (let j = 0; j < k; j++) take(i + j); i += k - 1; continue; }
     if (lw === "next" && nx === "month") { const d = new Date(today.getFullYear(), today.getMonth() + 1, 1); d.setDate(Math.min(today.getDate(), new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); out.due_date = dkey(d); take(i, i + 1); i++; continue; }
     if (lw === "nextweek" || (lw === "next" && nx === "week")) { out.due_date = dkey(addDays(today, 7)); take(i); if (lw === "next") take(i + 1); continue; }
+    // how long it takes: "for 1 hour", "for 30 mins", "for 1.5 hours" (blocks that much time in Free time)
+    if (lw === "for" && !out.estimate_min) {
+      const mm = (nx || "").match(/^(\d{1,3}(?:\.\d)?)(mins?|minutes?|m|hrs?|hours?|h)$/), un = lws[i + 2] || "";
+      let n = null, u = null, span = 0;
+      if (mm) { n = +mm[1]; u = /^h/.test(mm[2]) ? 60 : 1; span = 2; }
+      else if (/^(\d{1,3}(\.\d)?|an?|one|two|half)$/.test(nx) && /^(mins?|minutes?|hrs?|hours?)$/.test(un)) { n = { a: 1, an: 1, one: 1, two: 2, half: .5 }[nx] ?? +nx; u = /^h/.test(un) ? 60 : 1; span = 3; }
+      else if (nx === "half" && un === "an" && lws[i + 3] === "hour") { n = 30; u = 1; span = 4; }
+      if (n && u) { out.estimate_min = Math.round(n * u); for (let k = 0; k < span; k++) take(i + k); i += span - 1; continue; }
+    }
+    if (lw === "quick" && !out.estimate_min) out.estimate_min = 15;
     // relative: "after 2 minutes", "in 30 mins", "within 1 hour", "in 2 days", "after a week", "in half an hour", "2 hours later"
     {
       const UNIT = { min: 1, mins: 1, minute: 1, minutes: 1, m: 1, hr: 60, hrs: 60, hour: 60, hours: 60, h: 60, day: 1440, days: 1440, week: 10080, weeks: 10080 };
@@ -376,13 +386,13 @@ function renderChrome() {
   const d = $("#bell-dot"); if (d) d.hidden = !n;
   { const c = chatUnreadAll(), b = $("#chat-badge"); if (b) { b.hidden = !c; b.textContent = c; } }
   const sy = $("#sync"); if (sy) { sy.className = "sync " + (S.online ? "cloud" : "local"); $("span", sy).textContent = S.online ? "Synced" : "Reconnecting"; }
-  const moreViews = ["more", "routine", "money", "focus", "team", "chat", "workflows", "automations", "inbox", "settings"];
+  const moreViews = ["more", "routine", "money", "funds", "focus", "team", "chat", "workflows", "automations", "inbox", "settings"];
   $$("[data-go]").forEach(b => { if (!b.classList.contains("tab")) return; const k = b.dataset.go; b.classList.toggle("on", k === U.view || (k === "more" && moreViews.includes(U.view) && b.closest(".tabbar"))); });
   $("#banner").innerHTML = S.mode !== "demo" ? "" : api.isClean?.() ? (U.view === "settings" ? `<div class="banner"><span>💾</span><span><b>Saved on this device only.</b> Sync between phone and computer switches on once your TaskerBay account server is connected. Use <b>Copy all my data</b> below as a backup.</span></div>` : "") : `<div class="banner"><span>🧪</span><span><b>Demo mode</b> with sample data. To start your own planner, go to Settings → <b>Start my own planner</b>.</span></div>`;
 }
 
 /* ================= Routing & render ================= */
-const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
+const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, funds: vFunds, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
 function render(animate = false) {
   if (!S.ready) return;
   renderChrome();
@@ -530,6 +540,7 @@ function vToday(animate) {
         <div class="list">${focus.length ? focus.slice(0, 8).map(t => taskRow(t, { showParent: true })).join("") : emptyBox("Clear runway", "Tap ＋ to add a task, or ⭐ star one to focus on it today.")}</div>
         ${focus.length ? `<div class="swipe-hint">Swipe right to finish · left to delete · tap to open</div>` : ""}
       </div>
+      ${freeCard()}
       ${review.length || waiting.length ? `<div class="card"><div class="card-h"><h2>👥 Team pulse</h2><button class="link" data-go="team">Updates</button></div><div class="list">
         ${review.slice(0, 4).map(t => taskRow(t)).join("")}${waiting.filter(t => !review.includes(t)).slice(0, 4).map(t => taskRow(t)).join("")}</div></div>` : ""}
       ${aiPlanCard()}
@@ -716,7 +727,7 @@ function refreshTaskSheet(first) {
       <div class="field"><label for="tf-wf">Workflow</label><select class="inp" id="tf-wf" data-tfield="workflow_id">${E.workflows().map(w => `<option value="${w.id}" ${w.id === wf?.id ? "selected" : ""}>${esc(w.icon)} ${esc(w.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="tf-rep">Repeat</label><select class="inp" id="tf-rep" data-tfield="repeat">${[["", "Never"], ["daily", "Every day"], ["weekdays", "Weekdays (Mon–Fri)"], ["weekly", "Every week"], ["monthly", "Every month"]].map(([v, l]) => `<option value="${v}" ${t.repeat === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       ${members.length > 1 ? `<div class="field"><label for="tf-as">Assigned to</label><select class="inp" id="tf-as" data-tfield="assignee_id"><option value="">Nobody</option>${members.map(u => `<option value="${u}" ${t.assignee_id === u ? "selected" : ""}>${esc(nameOf(u))}${u === me() ? " (me)" : ""}</option>`).join("")}</select></div>` : ""}
-      <div class="field"><label for="tf-est">Estimate (min)</label><input class="inp" type="number" min="0" step="5" id="tf-est" data-tfield="estimate_min" value="${t.estimate_min ?? ""}" inputmode="numeric"></div>
+      <div class="field"><label for="tf-est">Takes (minutes)</label><input class="inp" type="number" min="0" step="5" id="tf-est" data-tfield="estimate_min" value="${t.estimate_min ?? ""}" inputmode="numeric"></div>
     </div>
     <div class="field"><label for="tf-notes">Notes</label><textarea class="inp" id="tf-notes" data-tfield="notes" placeholder="Details, links, decisions…">${esc(t.notes)}</textarea></div>
     <div class="card" style="padding:14px;box-shadow:none">
@@ -796,6 +807,354 @@ function routineSheet(r) {
   </form>`);
 }
 
+
+/* ================= FREE TIME (home screen) =================
+   Your working hours minus tasks that have a time (each takes its "Takes" minutes, 30 by default,
+   15 for quick ones) and timed routines. Pick any of the next 7 days, then copy/share or book a slot. */
+const FREE = (() => { const d = { start: "09:00", end: "18:00", min: 30 }; try { return { ...d, ...JSON.parse(localStorage.getItem("tb.free") || "{}") }; } catch (e) { return d; } })();
+const saveFree = () => { try { localStorage.setItem("tb.free", JSON.stringify(FREE)); } catch (e) {} };
+const toMin = t => { const [h, m] = String(t || "0:0").split(":").map(Number); return h * 60 + (m || 0); };
+const minT = n => `${pad(Math.floor(n / 60))}:${pad(n % 60)}`;
+const fmt12 = n => { let h = Math.floor(n / 60) % 24; const m = n % 60, ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12; return `${h}:${pad(m)} ${ap}`; };
+const durTxt = n => n >= 60 ? `${Math.floor(n / 60)}h${n % 60 ? ` ${n % 60}m` : ""}` : `${n}m`;
+const taskMins = t => +t.estimate_min > 0 ? +t.estimate_min : /\bquick\b/i.test(t.title || "") ? 15 : 30;
+function dayBusy(k) {
+  const mine = t => !t.assignee_id || t.assignee_id === me();
+  const items = S.db.tasks.filter(t => t.due_date === k && t.due_time && !E.isDone(t) && mine(t))
+    .map(t => { const s = toMin(fmtTime(t.due_time)), d = taskMins(t); return { s, e: s + d, d, label: t.title, id: t.id, quick: d <= 15 }; });
+  routineToday(parseKey(k)).filter(r => r.time_of_day).forEach(r => { const s = toMin(fmtTime(r.time_of_day)); items.push({ s, e: s + 15, d: 15, label: `${r.icon} ${r.name}`, quick: true }); });
+  return items.sort((a, b) => a.s - b.s);
+}
+function freeSlots(k) {
+  const S0 = toMin(FREE.start), S1 = Math.max(toMin(FREE.end), S0 + 30);
+  let from = S0;
+  if (k === dkey()) { const n = new Date(); from = Math.max(S0, Math.ceil((n.getHours() * 60 + n.getMinutes()) / 5) * 5); }
+  const busy = dayBusy(k), gaps = []; let cur = from;
+  for (const b of busy) { if (b.e <= cur) continue; if (b.s >= S1) break; if (b.s > cur) gaps.push([cur, Math.min(b.s, S1)]); cur = Math.max(cur, b.e); }
+  if (cur < S1) gaps.push([cur, S1]);
+  return { busy, gaps, slots: gaps.filter(([a, b]) => b - a >= FREE.min), S0, S1, from };
+}
+const dayName = k => parseKey(k).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+function freeText(keys) {
+  const lines = [];
+  for (const k of keys) { const { slots } = freeSlots(k); lines.push(`${dayName(k)}: ${slots.length ? slots.map(([a, b]) => `${fmt12(a)} – ${fmt12(b)}`).join(", ") : "no free time"}`); }
+  return `My free times${keys.length === 1 ? "" : " (next 7 days)"}:\n${lines.join("\n")}`;
+}
+async function shareText(text, title) {
+  if (navigator.share && matchMedia("(pointer:coarse)").matches) { try { await navigator.share({ title, text }); return; } catch (e) { if (e?.name === "AbortError") return; } }
+  try { await navigator.clipboard.writeText(text); toast("Copied. Paste it in WhatsApp, email or Teams."); } catch (e) { toast("Couldn't copy here."); }
+}
+function freeCard() {
+  const tk = dkey(); if (!U.freeDay || U.freeDay < tk) U.freeDay = tk;
+  const k = U.freeDay, { busy, gaps, slots, S0, S1, from } = freeSlots(k), span = S1 - S0;
+  const pct = n => Math.max(0, Math.min(100, (n - S0) / span * 100));
+  const total = slots.reduce((s, [a, b]) => s + b - a, 0), dow = parseKey(k).getDay();
+  const bar = `<div class="fbar" role="img" aria-label="Free and busy times">
+    ${from > S0 ? `<i class="past" style="left:0;width:${pct(from)}%"></i>` : ""}
+    ${gaps.map(([a, b]) => `<i class="${b - a >= FREE.min ? "free" : "gap"}" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%" title="Free ${fmt12(a)} – ${fmt12(b)}"></i>`).join("")}
+    ${busy.filter(b => b.e > S0 && b.s < S1).map(b => `<i class="busy ${b.quick ? "quick" : ""}" style="left:${pct(b.s)}%;width:${Math.max(.8, pct(b.e) - pct(b.s))}%" title="${esc(b.label)} ${fmt12(b.s)}"></i>`).join("")}
+  </div><div class="fticks"><span>${fmt12(S0)}</span><span>${fmt12(S0 + Math.round(span / 2 / 30) * 30)}</span><span>${fmt12(S1)}</span></div>`;
+  return `<div class="card free-card">
+    <div class="card-h"><h2>🕒 Free time</h2><span class="sub">${total ? `${durTxt(total)} free` : "Fully booked"}</span></div>
+    <div class="fdays">${[...Array(7)].map((_, i) => { const d = addDays(new Date(), i), dk = dkey(d), f = freeSlots(dk).slots.reduce((s, [a, b]) => s + b - a, 0); return `<button class="${dk === k ? "on" : ""} ${[0, 6].includes(d.getDay()) ? "wkend" : ""}" data-action="free-day" data-v="${dk}"><small>${i === 0 ? "Today" : d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><em>${f ? durTxt(f) : "full"}</em></button>`; }).join("")}</div>
+    ${bar}
+    <div class="flegend"><span><i class="free"></i>Free</span><span><i class="busy"></i>Busy</span><span><i class="busy quick"></i>Quick task</span>${[0, 6].includes(dow) ? `<span class="chip">Weekend</span>` : ""}</div>
+    <div class="slots">${slots.length ? slots.map(([a, b]) => `<div class="slot"><div><b>${fmt12(a)} – ${fmt12(b)}</b><small>${durTxt(b - a)} free</small></div><button class="btn ghost" data-action="free-book" data-d="${k}" data-t="${minT(a)}">Book</button></div>`).join("")
+      : `<p class="muted" style="margin:4px 0">No free slot of ${durTxt(FREE.min)} or more ${k === tk ? "left today" : `on ${dayName(k)}`} between ${fmt12(S0)} and ${fmt12(S1)}.</p>`}</div>
+    ${busy.length ? `<details class="fbusy"><summary>Busy: ${busy.length} item${busy.length > 1 ? "s" : ""}</summary>${busy.map(b => `<div ${b.id ? `data-action="open-task" data-id="${b.id}" role="button" tabindex="0"` : ""}><b>${fmt12(b.s)}</b><span>${esc(b.label)}</span><small>${durTxt(b.d)}</small></div>`).join("")}</details>` : ""}
+    <div class="fact"><button class="btn" data-action="free-share" data-v="day">Share ${k === tk ? "today" : dayName(k)}</button><button class="btn ghost" data-action="free-share" data-v="week">Share next 7 days</button></div>
+    <details class="fset"><summary>Working hours &amp; slot length</summary><div class="fgrid" style="margin-top:8px"><div class="field"><label for="free-start">From</label><input class="inp" type="time" id="free-start" value="${FREE.start}"></div><div class="field"><label for="free-end">To</label><input class="inp" type="time" id="free-end" value="${FREE.end}"></div></div>
+      <div class="seg" role="group" aria-label="Shortest slot">${[15, 30, 60, 120].map(m => `<button class="${FREE.min === m ? "on" : ""}" data-action="free-min" data-v="${m}">${durTxt(m)}+</button>`).join("")}</div>
+      <p class="muted" style="font-size:12.5px;margin:8px 0 0">Tasks block their “Takes” time (30 min if not set, 15 min for quick ones). Write “for 1 hour” or “quick” when adding a task.</p></details>
+  </div>`;
+}
+
+/* ================= FUNDS (shared event / project money) ================= */
+const F_CATS = ["General", "Food", "Transport", "Venue", "Decor", "Gifts", "Printing", "Supplies", "Contribution", "Donation", "Sponsorship", "Other"];
+const fundOf = id => S.db.fund_projects.find(f => f.id === id);
+const isFundOwner = f => f?.owner_id === me();
+const fMembers = f => S.db.fund_members.filter(m => m.project_id === f.id).sort((a, b) => (b.user_id === f.owner_id) - (a.user_id === f.owner_id) || a.name.localeCompare(b.name));
+const fEntries = f => S.db.fund_entries.filter(x => x.project_id === f.id);
+const myFundMember = f => S.db.fund_members.find(m => m.project_id === f.id && m.user_id === me());
+const fmoney = (f, n) => `${f.currency} ${famt(n)}`;
+const famt = n => { const v = Math.round((+n || 0) * 100) / 100; return v % 1 ? v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : nf.format(v); };
+function fundStats(f) {
+  const es = fEntries(f), ok = es.filter(x => x.status === "approved"), pend = es.filter(x => x.status === "pending");
+  const sum = (arr, k) => arr.filter(x => x.kind === k).reduce((s, x) => s + +x.amount, 0);
+  const people = fMembers(f).map(m => {
+    const a = ok.filter(x => x.member_id === m.id), p = pend.filter(x => x.member_id === m.id), lim = m.limit_amount == null ? null : +m.limit_amount;
+    const inn = sum(a, "in"), out = sum(a, "out"), pOut = sum(p, "out"), pIn = sum(p, "in");
+    return { m, inn, out, pIn, pOut, pend: p.length, hand: inn - out, lim, left: lim == null ? null : lim - out, over: lim != null && out > lim, warn: lim != null && out + pOut > lim };
+  });
+  const byCat = {}; ok.forEach(x => { const c = byCat[x.category] = byCat[x.category] || { in: 0, out: 0 }; c[x.kind] += +x.amount; });
+  const collected = sum(ok, "in"), spent = sum(ok, "out"), budget = +f.total_budget || 0;
+  return { es, ok, pend, people, byCat, collected, spent, hand: collected - spent, budget, left: budget - spent, allocated: people.reduce((s, p) => s + (p.lim || 0), 0), pendIn: sum(pend, "in"), pendOut: sum(pend, "out"), overBudget: budget > 0 && spent > budget };
+}
+const moneyTabs = on => `<div class="seg" role="group" aria-label="Money"><button class="${on === "money" ? "on" : ""}" data-go="money">My spending</button><button class="${on === "funds" ? "on" : ""}" data-go="funds">Funds${fundsWaiting() ? ` <span class="badge">${fundsWaiting()}</span>` : ""}</button></div>`;
+const fundsWaiting = () => S.db.fund_entries.filter(x => x.status === "pending" && isFundOwner(fundOf(x.project_id))).length;
+const stChip = s => s === "approved" ? `<span class="chip ok">Approved</span>` : s === "rejected" ? `<span class="chip bad">Rejected</span>` : `<span class="chip wait">Waiting</span>`;
+
+function vFunds() {
+  const f = U.fundId && fundOf(U.fundId);
+  if (f) return vFundDetail(f);
+  const list = [...S.db.fund_projects].sort((a, b) => (a.status === "closed") - (b.status === "closed") || b.created_at.localeCompare(a.created_at));
+  return `<div class="view-h"><div><h1>Funds</h1><p>Budgets for events and projects, shared with the people who collect and spend</p></div>${moneyTabs("funds")}</div>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn" data-action="fd-new">${I.plus}New fund</button></div>
+  ${list.length ? `<div class="fund-grid">${list.map(x => { const st = fundStats(x), own = isFundOwner(x), p = st.budget ? Math.min(100, st.spent / st.budget * 100) : 0, waiting = own ? st.pend.length : st.pend.filter(e => e.created_by === me()).length, flags = st.people.filter(q => q.over).length;
+    return `<button class="card fund-card hov ${x.status === "closed" ? "closed" : ""}" data-action="fd-open" data-id="${x.id}">
+      <div class="fc-h"><b>${esc(x.name)}</b><span class="chip ${own ? "ok" : ""}">${own ? "Admin" : "Member"}</span>${x.status === "closed" ? `<span class="chip">Closed</span>` : ""}</div>
+      ${x.description ? `<p class="muted fc-d">${esc(x.description)}</p>` : ""}
+      <div class="fc-n"><div><small>Collected</small><b class="amt-in">${fmoney(x, st.collected)}</b></div><div><small>Spent</small><b class="amt-out">${fmoney(x, st.spent)}</b></div><div><small>In hand</small><b>${fmoney(x, st.hand)}</b></div></div>
+      ${st.budget ? `<div class="budget ${st.overBudget ? "over" : p > 80 ? "warn" : ""}" style="padding:0"><div class="bh">Budget ${fmoney(x, st.budget)}<span class="num">${Math.round(st.spent / st.budget * 100)}% used</span></div><div class="track"><i style="width:${p}%"></i></div></div>` : ""}
+      <div class="fc-f">${waiting ? `<span class="chip wait">⏳ ${waiting} waiting</span>` : ""}${flags ? `<span class="chip bad">⚠️ ${flags} over limit</span>` : ""}<span class="muted">${st.people.length} ${st.people.length === 1 ? "person" : "people"} · ${st.es.length} entries</span></div>
+    </button>`; }).join("")}</div>`
+    : `<div class="card">${emptyBox("No funds yet", "Create one for an event, trip, party or project. Set the total budget, add the people who collect or spend money, and give each a limit. You approve what they add, and you can download a PDF report any time.", I.money)}<div style="text-align:center;margin-top:12px"><button class="btn" data-action="fd-new">${I.plus}Create your first fund</button></div></div>`}`;
+}
+
+function vFundDetail(f) {
+  const st = fundStats(f), own = isFundOwner(f), mm = myFundMember(f), cur = f.currency;
+  const filt = U.fundFilter || "all", who = U.fundWho || "";
+  let rows = [...st.es].filter(x => x.status !== "rejected" || filt === "rejected" || filt === "all");
+  if (filt === "in" || filt === "out") rows = rows.filter(x => x.kind === filt && x.status !== "rejected");
+  if (filt === "pending") rows = rows.filter(x => x.status === "pending");
+  if (filt === "rejected") rows = rows.filter(x => x.status === "rejected");
+  if (who) rows = rows.filter(x => x.member_id === who);
+  rows.sort((a, b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at));
+  const mName = id => S.db.fund_members.find(m => m.id === id)?.name || "Removed person";
+  const waiting = own ? st.pend : st.pend.filter(x => x.created_by === me());
+  const pb = st.budget ? Math.min(100, st.spent / st.budget * 100) : 0;
+  const entryRow = x => { const canEdit = own || (x.created_by === me() && x.status === "pending"); return `<div class="row fe-row ${x.status}" style="--c:${x.kind === "in" ? "var(--green)" : "var(--red)"}">
+      <div class="main" ${canEdit ? `data-action="fd-entry" data-id="${x.id}" role="button" tabindex="0"` : ""}><div class="t">${esc(x.title || x.category)}</div>
+      <div class="meta"><span class="chip">${esc(mName(x.member_id))}</span><span class="chip">${esc(x.category)}</span><span class="chip">${parseKey(x.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>${stChip(x.status)}${x.note ? `<span class="chip">📝 ${esc(x.note.slice(0, 30))}</span>` : ""}${x.status === "rejected" && x.review_note ? `<span class="chip bad">${esc(x.review_note.slice(0, 40))}</span>` : ""}</div></div>
+      <span class="${x.kind === "in" ? "amt-in" : "amt-out"}">${x.kind === "in" ? "+" : "−"}${famt(x.amount)}</span></div>`; };
+  return `<div class="view-h"><div><button class="link" data-action="fd-back" style="margin-bottom:6px;font-weight:700">‹ All funds</button><h1>${esc(f.name)}</h1><p>${own ? "You're the admin" : "Admin: " + esc(fMembers(f).find(m => m.user_id === f.owner_id)?.name || "the creator")} · ${cur}${f.status === "closed" ? " · Closed" : ""}</p></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${f.status === "active" && (own || mm) ? `<button class="btn" data-action="fd-entry">${I.plus}Add entry</button>` : ""}<button class="btn ghost" data-action="fd-pdf" data-id="${f.id}">📄 PDF report</button>${own ? `<button class="btn ghost" data-action="fd-edit" data-id="${f.id}">Edit</button>` : ""}</div></div>
+  ${f.description ? `<p class="muted" style="margin:-4px 0 14px">${esc(f.description)}</p>` : ""}
+  <div class="grid g-stats fund-stats">
+    <div class="card stat" style="--c:var(--accent)"><div class="k"><i></i>Budget</div><div class="v num">${famt(st.budget)}</div><div class="d">${st.allocated ? `${famt(st.allocated)} given as limits` : cur}</div></div>
+    <div class="card stat" style="--c:var(--green)"><div class="k"><i></i>Collected</div><div class="v num">${famt(st.collected)}</div><div class="d">${st.pendIn ? `+${famt(st.pendIn)} waiting` : "Approved"}</div></div>
+    <div class="card stat" style="--c:var(--red)"><div class="k"><i></i>Spent</div><div class="v num">${famt(st.spent)}</div><div class="d">${st.pendOut ? `+${famt(st.pendOut)} waiting` : "Approved"}</div></div>
+    <div class="card stat" style="--c:var(--gold)"><div class="k"><i></i>Cash in hand</div><div class="v num">${famt(st.hand)}</div><div class="d">Collected − spent</div></div>
+    <div class="card stat" style="--c:${st.left < 0 ? "var(--red)" : "var(--blue)"}"><div class="k"><i></i>Budget left</div><div class="v num" style="${st.left < 0 ? "color:var(--red)" : ""}">${famt(st.left)}</div><div class="d">${st.budget ? (st.overBudget ? "⚠️ Over budget" : `${Math.round(pb)}% used`) : "No total budget set"}</div></div>
+  </div>
+  ${st.budget ? `<div class="card mt"><div class="budget ${st.overBudget ? "over" : pb > 80 ? "warn" : ""}" style="padding:0"><div class="bh">Budget used<span class="num">${famt(st.spent)} / ${famt(st.budget)}</span></div><div class="track"><i style="width:${pb}%"></i></div></div></div>` : ""}
+  ${waiting.length ? `<div class="card mt fund-wait"><div class="card-h"><h2>⏳ ${own ? "Waiting for your approval" : "Your entries waiting for approval"}</h2>${own && waiting.length > 1 ? `<button class="btn ghost" data-action="fd-approve-all" data-id="${f.id}" style="padding:7px 12px">Approve all ${waiting.length}</button>` : `<span class="sub">${waiting.length}</span>`}</div>
+    <div class="list">${waiting.map(x => { const p = st.people.find(q => q.m.id === x.member_id), willOver = x.kind === "out" && p && p.lim != null && p.out + +x.amount > p.lim;
+      return `<div class="li fw-row"><div class="grow" ${own ? `data-action="fd-entry" data-id="${x.id}" role="button" tabindex="0"` : ""}><b>${x.kind === "in" ? "Collected" : "Spent"} ${fmoney(f, x.amount)} · ${esc(x.title || x.category)}</b><small>${esc(mName(x.member_id))} · ${esc(x.category)} · ${parseKey(x.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}${x.note ? " · " + esc(x.note) : ""}</small>${willOver ? `<small class="flag">⚠️ Takes ${esc(p.m.name)} over their limit: ${famt(p.out + +x.amount)} of ${famt(p.lim)}</small>` : ""}</div>
+      ${own ? `<div class="fw-btns"><button class="btn" data-action="fd-approve" data-id="${x.id}" style="padding:7px 12px">Approve</button><button class="btn ghost" data-action="fd-reject" data-id="${x.id}" style="padding:7px 12px">Reject</button></div>` : `<button class="btn ghost" data-action="fd-entry" data-id="${x.id}" style="padding:7px 12px">Edit</button>`}</div>`; }).join("")}</div></div>` : ""}
+  <div class="card mt"><div class="card-h"><h2>👥 People</h2>${own ? `<button class="btn ghost" data-action="fd-person" style="padding:7px 12px">${I.plus}Add person</button>` : ""}</div>
+    <div class="ftable-wrap"><table class="ftable"><thead><tr><th>Person</th><th>Limit</th><th>Collected</th><th>Spent</th><th>In hand</th><th>Limit left</th></tr></thead><tbody>
+    ${st.people.map(p => `<tr class="${p.over ? "over" : p.warn ? "warn" : ""}" ${own ? `data-action="fd-person" data-id="${p.m.id}" role="button" tabindex="0"` : ""}>
+      <td><b>${esc(p.m.name)}</b>${p.m.user_id === f.owner_id ? ` <span class="chip ok">Admin</span>` : p.m.user_id ? "" : ` <span class="chip">No app</span>`}${p.pend ? ` <span class="chip wait">${p.pend} waiting</span>` : ""}</td>
+      <td>${p.lim == null ? "—" : famt(p.lim)}</td><td class="amt-in">${famt(p.inn)}</td><td class="amt-out">${famt(p.out)}</td><td>${famt(p.hand)}</td>
+      <td>${p.lim == null ? "—" : `${p.over ? "⚠️ " : ""}${famt(p.left)}`}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td>Total</td><td>${st.allocated ? famt(st.allocated) : "—"}</td><td>${famt(st.collected)}</td><td>${famt(st.spent)}</td><td>${famt(st.hand)}</td><td></td></tr></tfoot></table></div>
+    ${st.budget && st.allocated > st.budget ? `<p class="flag" style="margin:10px 0 0">⚠️ Limits given (${famt(st.allocated)}) are more than the total budget (${famt(st.budget)}).</p>` : ""}
+    <p class="muted" style="font-size:12.5px;margin:10px 0 0">In hand = what they collected minus what they spent. A minus means the fund owes them. Only approved entries count; waiting ones are shown separately.</p></div>
+  ${Object.keys(st.byCat).length ? `<div class="card mt"><div class="card-h"><h2>🗂️ By category</h2></div><div class="list">${Object.entries(st.byCat).sort((a, b) => (b[1].out + b[1].in) - (a[1].out + a[1].in)).map(([c, v]) => `<div class="li"><div class="grow"><b>${esc(c)}</b></div>${v.in ? `<span class="amt-in">+${famt(v.in)}</span>` : ""}${v.out ? `<span class="amt-out" style="margin-left:10px">−${famt(v.out)}</span>` : ""}</div>`).join("")}</div></div>` : ""}
+  <div class="card mt"><div class="card-h"><h2>Entries</h2><span class="sub">${rows.length}</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><div class="seg fund-filter" role="group" aria-label="Show">${[["all", "All"], ["in", "Collected"], ["out", "Spent"], ["pending", "Waiting"], ["rejected", "Rejected"]].map(([v, l]) => `<button class="${filt === v ? "on" : ""}" data-action="fd-filter" data-v="${v}">${l}</button>`).join("")}</div>
+      <select class="inp" id="fd-who" style="width:auto;padding:7px 10px" aria-label="Person"><option value="">Everyone</option>${fMembers(f).map(m => `<option value="${m.id}" ${who === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select></div>
+    <div class="list money-list">${rows.length ? rows.map(entryRow).join("") : `<p class="muted" style="margin:0">Nothing here yet.${f.status === "active" && (own || mm) ? " Tap “Add entry” to record money collected or spent." : ""}</p>`}</div></div>`;
+}
+
+function fundSheet(f) {
+  const isNew = !f; f = f || { id: uuid(), name: "", description: "", total_budget: "", currency: CURRENCY || "AED", status: "active" };
+  U.sheet = { type: "fund" };
+  openSheet(`<h2 id="sheet-title">${isNew ? "New fund" : "Edit fund"}</h2>
+  <form data-form="fd-fund" data-id="${f.id}" data-new="${isNew ? 1 : ""}">
+    <div class="field"><label for="fd-name">Name</label><input class="inp" id="fd-name" required maxlength="120" value="${esc(f.name)}" placeholder="e.g. Annual staff party, Family Eid trip, Office renovation"></div>
+    <div class="field"><label for="fd-desc">Description (optional)</label><textarea class="inp" id="fd-desc" maxlength="500" placeholder="What the money is for">${esc(f.description)}</textarea></div>
+    <div class="fgrid"><div class="field"><label for="fd-budget">Total budget</label><input class="inp num" id="fd-budget" inputmode="decimal" value="${f.total_budget === "" ? "" : esc(f.total_budget)}" placeholder="0"></div>
+    <div class="field"><label for="fd-cur">Currency</label><input class="inp" id="fd-cur" maxlength="8" value="${esc(f.currency)}"></div></div>
+    ${isNew ? `<p class="muted" style="font-size:13px;margin:0 0 10px">You'll be the admin: you add people, set their limits and approve what they add.</p>` : `<div class="field"><span class="lab">Status</span>${picks("fdst", [["active", "Active"], ["closed", "Closed (no new entries)"]], f.status)}</div>`}
+    <div class="sheet-actions">${isNew ? "" : `<button type="button" class="btn danger" data-action="fd-delete" data-id="${f.id}">Delete fund</button>`}<button class="btn" type="submit">${isNew ? "Create fund" : "Save"}</button></div>
+  </form>`);
+}
+
+function personSheet(f, m) {
+  const isNew = !m; m = m || { id: uuid(), name: "", user_id: null, limit_amount: null };
+  const inFund = new Set(fMembers(f).map(x => x.user_id).filter(Boolean));
+  const known = S.db.profiles.filter(p => p.id !== me() && (!inFund.has(p.id) || p.id === m.user_id));
+  const isOwnerRow = m.user_id === f.owner_id;
+  U.sheet = { type: "fund-person", fund: f.id, linked: m.user_id ? { id: m.user_id, name: m.name } : null };
+  openSheet(`<h2 id="sheet-title">${isNew ? "Add person" : esc(m.name)}</h2>
+  <form data-form="fd-person" data-id="${m.id}" data-new="${isNew ? 1 : ""}">
+    ${isOwnerRow ? "" : `<div class="field"><label for="fp-link">Uses TaskerBay?</label><select class="inp" id="fp-link"><option value="">No, just track them by name</option>${known.map(p => `<option value="${p.id}" ${m.user_id === p.id ? "selected" : ""}>${esc(p.full_name || p.email)}</option>`).join("")}${m.user_id && !known.some(p => p.id === m.user_id) ? `<option value="${m.user_id}" selected>${esc(m.name)} (TaskerBay)</option>` : ""}<option value="email">Someone else, find by email…</option></select></div>
+    <div class="field" id="fp-email-f" style="display:none"><label for="fp-email">Their TaskerBay email</label><div style="display:flex;gap:8px"><input class="inp" id="fp-email" type="email" placeholder="name@example.com"><button type="button" class="btn ghost" data-action="fd-find">Find</button></div><small class="muted" id="fp-found"></small></div>`}
+    <div class="field"><label for="fp-name">Name</label><input class="inp" id="fp-name" required maxlength="80" value="${esc(m.name)}" placeholder="e.g. Ahmed"></div>
+    <div class="field"><label for="fp-limit">Spending limit (${esc(f.currency)}, optional)</label><input class="inp num" id="fp-limit" inputmode="decimal" value="${m.limit_amount == null ? "" : esc(m.limit_amount)}" placeholder="No limit"></div>
+    <p class="muted" style="font-size:13px;margin:0 0 10px">${isOwnerRow ? "This is you, the admin." : "People who use TaskerBay can add their own entries; you approve them. For people without the app, you add entries for them."} If their approved spending goes over the limit, they're flagged in red.</p>
+    <div class="sheet-actions">${isNew || isOwnerRow ? "" : `<button type="button" class="btn danger" data-action="fd-person-del" data-id="${m.id}">Remove</button>`}<button class="btn" type="submit">${isNew ? "Add person" : "Save"}</button></div>
+  </form>`);
+}
+
+function fundEntrySheet(f, x) {
+  const own = isFundOwner(f), mm = myFundMember(f), isNew = !x;
+  x = x || { id: uuid(), kind: "out", amount: "", member_id: own ? (U.fundWho || mm?.id) : mm?.id, title: "", category: "General", date: dkey(), note: "", status: own ? "approved" : "pending" };
+  const cats = [...new Set([...F_CATS, ...fEntries(f).map(e => e.category)])];
+  U.sheet = { type: "fund-entry", fund: f.id };
+  openSheet(`<h2 id="sheet-title">${isNew ? "Add entry" : "Entry"}</h2>
+  <form data-form="fd-entry" data-id="${x.id}" data-new="${isNew ? 1 : ""}">
+    <div class="field"><span class="lab">Type</span>${picks("fekind", [["out", "💸 Spent"], ["in", "💰 Collected / received"]], x.kind)}</div>
+    <div class="fgrid"><div class="field"><label for="fe-amt">Amount (${esc(f.currency)})</label><input class="inp num" id="fe-amt" inputmode="decimal" required value="${esc(x.amount)}" placeholder="0.00" ${isNew ? "autofocus" : ""}></div>
+    <div class="field"><label for="fe-date">Date</label><input class="inp" type="date" id="fe-date" value="${x.date}"></div></div>
+    <div class="field"><label for="fe-who">Person</label>${own ? `<select class="inp" id="fe-who">${fMembers(f).map(m => `<option value="${m.id}" ${m.id === x.member_id ? "selected" : ""}>${esc(m.name)}${m.user_id === me() ? " (me)" : ""}</option>`).join("")}</select>` : `<input class="inp" disabled value="${esc(mm?.name || "Me")}"><input type="hidden" id="fe-who" value="${mm?.id || ""}">`}</div>
+    <div class="field"><label for="fe-title">What for</label><input class="inp" id="fe-title" maxlength="140" value="${esc(x.title)}" placeholder="e.g. Cake from bakery, Contribution from Ali"></div>
+    <div class="field"><label for="fe-cat">Category</label><input class="inp" id="fe-cat" list="fe-cats" maxlength="40" value="${esc(x.category)}"><datalist id="fe-cats">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist></div>
+    <div class="field"><label for="fe-note">Note (optional)</label><input class="inp" id="fe-note" maxlength="300" value="${esc(x.note)}" placeholder="Receipt no., paid by card, etc."></div>
+    <p class="muted" id="fe-warn" style="font-size:13px;margin:0 0 10px">${own ? "Entries you add are approved straight away." : "The admin will review this. You can edit or delete it until it's approved."}</p>
+    ${!isNew && x.status !== "pending" ? `<p style="margin:0 0 10px">${stChip(x.status)}${x.review_note ? ` <span class="muted">${esc(x.review_note)}</span>` : ""}</p>` : ""}
+    <div class="sheet-actions">${isNew ? "" : `<button type="button" class="btn danger" data-action="fd-entry-del" data-id="${x.id}">Delete</button>`}
+      ${own && !isNew && x.status === "pending" ? `<button type="button" class="btn ghost" data-action="fd-reject" data-id="${x.id}">Reject</button><button class="btn" type="submit" data-approve="1">Save &amp; approve</button>` : `<button class="btn" type="submit">${isNew ? (own ? "Add" : "Send for approval") : "Save"}</button>`}</div>
+  </form>`);
+  warnLimit();
+}
+function warnLimit() {
+  const f = fundOf(U.sheet?.fund), w = $("#fe-warn"); if (!f || !w) return;
+  const amt = parseFloat(($("#fe-amt")?.value || "").replace(/,/g, "")) || 0, kind = pickVal("fekind"), mid = $("#fe-who")?.value;
+  const p = fundStats(f).people.find(q => q.m.id === mid), id = $("#sheet form")?.dataset.id, cur = S.db.fund_entries.find(e => e.id === id);
+  const base = p ? p.out - (cur && cur.status === "approved" && cur.kind === "out" ? +cur.amount : 0) : 0;
+  if (kind === "out" && p && p.lim != null && base + amt > p.lim) { w.className = "flag"; w.textContent = `⚠️ This takes ${p.m.name} over their limit: ${famt(base + amt)} of ${famt(p.lim)}. It will be flagged.`; }
+  else { w.className = "muted"; w.textContent = isFundOwner(f) ? "Entries you add are approved straight away." : "The admin will review this. You can edit or delete it until it's approved."; }
+}
+function rejectSheet(x) {
+  U.sheet = { type: "fund-reject", fund: x.project_id };
+  openSheet(`<h2 id="sheet-title">Reject entry</h2><form data-form="fd-reject" data-id="${x.id}">
+    <p class="muted" style="margin:-4px 0 12px">${x.kind === "in" ? "Collected" : "Spent"} ${fmoney(fundOf(x.project_id), x.amount)} · ${esc(x.title || x.category)}</p>
+    <div class="field"><label for="fr-why">Reason (they'll see this)</label><input class="inp" id="fr-why" maxlength="200" placeholder="e.g. No receipt, not part of this budget" autofocus></div>
+    <div class="sheet-actions"><button class="btn danger" type="submit">Reject</button></div></form>`);
+}
+
+/* PDF report: built in the browser, nothing is uploaded */
+async function fundPdf(f) {
+  const { Report } = await import("./pdf.js");
+  const st = fundStats(f), cur = f.currency, mName = id => S.db.fund_members.find(m => m.id === id)?.name || "Removed";
+  const r = new Report({ title: f.name, subtitle: `Fund report · ${cur} · ${f.status === "closed" ? "Closed · " : ""}Admin: ${fMembers(f).find(m => m.user_id === f.owner_id)?.name || ""} · Generated ${new Date().toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}`, footer: `TaskerBay · ${f.name} · Approved entries only unless marked Waiting` });
+  if (f.description) r.note(f.description, [70, 80, 92]);
+  r.heading("Summary");
+  const red = [200, 40, 40], green = [22, 140, 80];
+  r.boxes([["Total budget", `${cur} ${famt(st.budget)}`], ["Collected", `${cur} ${famt(st.collected)}`, green], ["Spent", `${cur} ${famt(st.spent)}`, red], ["Cash in hand", `${cur} ${famt(st.hand)}`], ["Budget left", `${cur} ${famt(st.left)}`, st.left < 0 ? red : null], ["Waiting approval", st.pend.length ? `${st.pend.length} · +${famt(st.pendIn)} / -${famt(st.pendOut)}` : "None"]]);
+  if (st.overBudget) r.note(`Over budget by ${cur} ${famt(st.spent - st.budget)}.`, red);
+  r.heading("People");
+  r.table([{ h: "Person", w: .27, bold: true }, { h: "Limit", w: .13, align: "right" }, { h: "Collected", w: .15, align: "right" }, { h: "Spent", w: .15, align: "right" }, { h: "In hand", w: .14, align: "right" }, { h: "Limit left", w: .16, align: "right" }],
+    st.people.map(p => [p.m.name + (p.m.user_id === f.owner_id ? " (admin)" : ""), p.lim == null ? "-" : famt(p.lim), famt(p.inn), famt(p.out), famt(p.hand), p.lim == null ? "-" : (p.over ? "OVER " : "") + famt(p.left)]),
+    { rowColor: (row, i) => st.people[i]?.over ? red : null, total: ["Total", st.allocated ? famt(st.allocated) : "-", famt(st.collected), famt(st.spent), famt(st.hand), ""] });
+  const flagged = st.people.filter(p => p.over);
+  if (flagged.length) r.note(`Over their limit: ${flagged.map(p => `${p.m.name} (${famt(p.out)} of ${famt(p.lim)})`).join(", ")}.`, red);
+  if (Object.keys(st.byCat).length) {
+    r.heading("By category");
+    const cats = Object.entries(st.byCat).sort((a, b) => b[1].out - a[1].out);
+    r.table([{ h: "Category", w: .5, bold: true }, { h: "Collected", w: .25, align: "right" }, { h: "Spent", w: .25, align: "right" }], cats.map(([c, v]) => [c, v.in ? famt(v.in) : "-", v.out ? famt(v.out) : "-"]), { total: ["Total", famt(st.collected), famt(st.spent)] });
+  }
+  r.heading("All entries");
+  const es = st.es.filter(x => x.status !== "rejected").sort((a, b) => a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at));
+  if (es.length) r.table([{ h: "Date", w: .12 }, { h: "Person", w: .17 }, { h: "Type", w: .11 }, { h: "Category", w: .13 }, { h: "Description", w: .25 }, { h: "Amount", w: .12, align: "right" }, { h: "Status", w: .10 }],
+    es.map(x => [parseKey(x.date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }), mName(x.member_id), x.kind === "in" ? "Collected" : "Spent", x.category, x.title + (x.note ? ` (${x.note})` : ""), (x.kind === "in" ? "+" : "-") + famt(x.amount), x.status === "approved" ? "Approved" : "Waiting"]),
+    { rowColor: (row, i) => es[i].status === "pending" ? [150, 110, 0] : null });
+  else r.note("No entries yet.");
+  const rej = st.es.filter(x => x.status === "rejected");
+  if (rej.length) { r.heading("Rejected (not counted)"); r.table([{ h: "Date", w: .12 }, { h: "Person", w: .18 }, { h: "Description", w: .35 }, { h: "Amount", w: .13, align: "right" }, { h: "Reason", w: .22 }], rej.map(x => [parseKey(x.date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }), mName(x.member_id), x.title || x.category, (x.kind === "in" ? "+" : "-") + famt(x.amount), x.review_note || ""])); }
+  const blob = r.blob(), name = `${f.name.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") || "fund"}-report-${dkey()}.pdf`;
+  const file = new File([blob], name, { type: "application/pdf" });
+  if (navigator.canShare?.({ files: [file] }) && matchMedia("(pointer:coarse)").matches) { try { await navigator.share({ files: [file], title: `${f.name} report` }); return; } catch (e) { if (e?.name === "AbortError") return; } }
+  const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast("PDF report downloaded.");
+}
+
+async function fundAction(act, a, id) {
+  switch (act) {
+    case "free-day": U.freeDay = a.dataset.v; render(); return true;
+    case "free-min": FREE.min = +a.dataset.v; saveFree(); render(); return true;
+    case "free-book": closeSheet(); setTimeout(() => newTaskSheet({ due_date: a.dataset.d, due_time: a.dataset.t }), 10); return true;
+    case "free-share": { const k = U.freeDay || dkey(); await shareText(freeText(a.dataset.v === "week" ? [...Array(7)].map((_, i) => dkey(addDays(new Date(), i))) : [k]), "My free time"); return true; }
+    case "fd-new": fundSheet(); return true;
+    case "fd-open": U.fundId = id; U.fundFilter = "all"; U.fundWho = ""; history.replaceState(null, "", "#funds"); render(true); scrollTo({ top: 0 }); return true;
+    case "fd-back": U.fundId = null; render(true); return true;
+    case "fd-edit": fundSheet(fundOf(id)); return true;
+    case "fd-filter": U.fundFilter = a.dataset.v; render(); return true;
+    case "fd-pdf": { const f = fundOf(id); if (!f) return true; a.disabled = true; try { await fundPdf(f); } catch (e) { toast("Couldn't make the PDF: " + (e.message || e)); } a.disabled = false; return true; }
+    case "fd-person": { const f = fundOf(U.fundId); if (f && isFundOwner(f)) personSheet(f, id ? S.db.fund_members.find(m => m.id === id) : null); return true; }
+    case "fd-entry": { const f = fundOf(U.fundId); if (!f) return true; const x = id ? S.db.fund_entries.find(e => e.id === id) : null; if (!x && f.status === "closed") { toast("This fund is closed."); return true; } if (!x && !isFundOwner(f) && !myFundMember(f)) return true; fundEntrySheet(f, x); return true; }
+    case "fd-approve": { const x = S.db.fund_entries.find(e => e.id === id); if (!x) return true; await update("fund_entries", x, { status: "approved", review_note: "", reviewed_by: me(), reviewed_at: new Date().toISOString() }); buzz(15); toast("Approved."); return true; }
+    case "fd-approve-all": { const xs = S.db.fund_entries.filter(e => e.project_id === id && e.status === "pending"); for (const x of xs) await update("fund_entries", x, { status: "approved", review_note: "", reviewed_by: me(), reviewed_at: new Date().toISOString() }); toast(`Approved ${xs.length} entries.`); return true; }
+    case "fd-reject": { const x = S.db.fund_entries.find(e => e.id === id); if (x) rejectSheet(x); return true; }
+    case "fd-find": {
+      const addr = $("#fp-email")?.value.trim(), out = $("#fp-found"); if (!addr) return true;
+      try { const r = await api.rpc("fund_find_user", { addr }); const u = Array.isArray(r) ? r[0] : r;
+        if (u?.id) { U.sheet.linked = { id: u.id, name: u.full_name }; out.textContent = `✓ Found ${u.full_name}. They'll get a notice when you save.`; if (!$("#fp-name").value.trim()) $("#fp-name").value = u.full_name; }
+        else { U.sheet.linked = null; out.textContent = "No approved TaskerBay account uses that email. You can still add them by name only."; } }
+      catch (e) { out.textContent = "Couldn't search right now."; }
+      return true;
+    }
+    case "fd-person-del": {
+      const m = S.db.fund_members.find(x => x.id === id); if (!m) return true;
+      const n = S.db.fund_entries.filter(e => e.member_id === m.id).length;
+      if (n && a.dataset.sure !== "1") { a.dataset.sure = "1"; a.textContent = `Remove + delete ${n} entries?`; return true; }
+      closeSheet(); await remove("fund_members", m); S.db.fund_entries = S.db.fund_entries.filter(e => e.member_id !== m.id); render(); toast(`${m.name} removed.`); return true;
+    }
+    case "fd-entry-del": { const x = S.db.fund_entries.find(e => e.id === id); if (!x) return true; if (a.dataset.sure !== "1") { a.dataset.sure = "1"; a.textContent = "Tap again to delete"; return true; } closeSheet(); await remove("fund_entries", x); toast("Entry deleted."); return true; }
+    case "fd-delete": {
+      const f = fundOf(id); if (!f) return true;
+      if (a.dataset.sure !== "1") { a.dataset.sure = "1"; a.textContent = "Delete everything? Tap again"; return true; }
+      closeSheet(); U.fundId = null; await remove("fund_projects", f);
+      S.db.fund_members = S.db.fund_members.filter(m => m.project_id !== f.id); S.db.fund_entries = S.db.fund_entries.filter(x => x.project_id !== f.id);
+      render(true); toast(`“${f.name}” deleted.`); return true;
+    }
+  }
+  return false;
+}
+
+async function fundSubmit(kind, f, e) {
+  const num = v => { const n = parseFloat(String(v || "").replace(/,/g, "")); return Number.isFinite(n) ? Math.round(n * 100) / 100 : null; };
+  if (kind === "fd-fund") {
+    const old = fundOf(f.dataset.id), name = $("#fd-name").value.trim(); if (!name) return;
+    const budget = num($("#fd-budget").value) ?? 0; if (budget < 0) { toast("Budget can't be negative."); return; }
+    const row = { id: f.dataset.id, name, description: $("#fd-desc").value.trim(), total_budget: budget, currency: ($("#fd-cur").value.trim() || "AED").toUpperCase().slice(0, 8), status: old ? (pickVal("fdst") || old.status) : "active" };
+    closeSheet();
+    if (old) { await update("fund_projects", old, { ...row, updated_at: new Date().toISOString() }); toast("Saved."); }
+    else {
+      const now = new Date().toISOString();
+      await insert("fund_projects", { ...row, owner_id: me(), created_at: now, updated_at: now });
+      if (api.reloadFunds) await api.reloadFunds().catch(() => {}); // the server adds you as the first person
+      U.fundId = row.id; render(true); toast("Fund created. Add the people next."); setTimeout(() => personSheet(fundOf(row.id)), 350);
+    }
+    return;
+  }
+  if (kind === "fd-person") {
+    const fund = fundOf(U.sheet.fund), old = S.db.fund_members.find(m => m.id === f.dataset.id); if (!fund) return;
+    const name = $("#fp-name").value.trim(); if (!name) return;
+    const lim = $("#fp-limit").value.trim() === "" ? null : num($("#fp-limit").value); if (lim != null && lim < 0) { toast("Limit can't be negative."); return; }
+    let user_id = old?.user_id || null; const sel = $("#fp-link");
+    if (sel) { if (sel.value === "email") user_id = U.sheet.linked?.id || null; else user_id = sel.value || null; }
+    if (user_id && fMembers(fund).some(m => m.user_id === user_id && m.id !== f.dataset.id)) { toast("That person is already in this fund."); return; }
+    closeSheet();
+    const row = { id: f.dataset.id, project_id: fund.id, user_id, name, limit_amount: lim };
+    if (old) await update("fund_members", old, row); else await insert("fund_members", { ...row, created_at: new Date().toISOString() });
+    toast(old ? "Saved." : `${name} added${user_id ? ". They'll get a notice." : "."}`);
+    return;
+  }
+  if (kind === "fd-entry") {
+    const fund = fundOf(U.sheet.fund); if (!fund) return;
+    const amount = num($("#fe-amt").value); if (!(amount > 0)) { $("#fe-amt").focus(); toast("Enter an amount above zero."); return; }
+    const own = isFundOwner(fund), old = S.db.fund_entries.find(x => x.id === f.dataset.id), member_id = $("#fe-who").value;
+    if (!member_id) { toast("You're not part of this fund."); return; }
+    const approve = e?.submitter?.dataset.approve === "1";
+    const row = { id: f.dataset.id, project_id: fund.id, member_id, kind: pickVal("fekind") || "out", amount, title: $("#fe-title").value.trim(), category: $("#fe-cat").value.trim() || "General", date: $("#fe-date").value || dkey(), note: $("#fe-note").value.trim() };
+    const p = fundStats(fund).people.find(q => q.m.id === member_id), base = p ? p.out - (old && old.status === "approved" && old.kind === "out" ? +old.amount : 0) : 0;
+    const over = row.kind === "out" && p && p.lim != null && base + amount > p.lim;
+    closeSheet(); buzz(15);
+    if (old) await update("fund_entries", old, { ...row, ...(approve ? { status: "approved", review_note: "" } : {}), updated_at: new Date().toISOString() });
+    else { const now = new Date().toISOString(); await insert("fund_entries", { ...row, status: own ? "approved" : "pending", review_note: "", created_by: me(), reviewed_by: own ? me() : null, reviewed_at: own ? now : null, created_at: now, updated_at: now }); }
+    toast(over ? `⚠️ Saved, but ${p.m.name} is now over their limit (${famt(base + amount)} of ${famt(p.lim)}).` : old ? (approve ? "Saved and approved." : "Saved.") : own ? "Entry added." : "Sent to the admin for approval.");
+    return;
+  }
+  if (kind === "fd-reject") {
+    const x = S.db.fund_entries.find(y => y.id === f.dataset.id); if (!x) return;
+    closeSheet(); await update("fund_entries", x, { status: "rejected", review_note: $("#fr-why").value.trim(), reviewed_by: me(), reviewed_at: new Date().toISOString() }); toast("Rejected. They'll see your reason.");
+  }
+}
+
 /* ================= MONEY ================= */
 function monthData(mk) {
   const inMonth = S.db.expenses.filter(x => x.date.startsWith(mk));
@@ -827,7 +1186,7 @@ function vMoney(animate) {
     else aiBody = `<p class="muted" style="margin:0 0 12px">A plain-English read on ${esc(monthName.split(" ")[0])}: where the money went, what's unusual, one thing to try.</p><button class="ai-btn" data-action="ai-month" ${inMonth.length ? "" : "disabled"}><span class="spark">✨</span>Explain my month</button>`;
   }
   return `
-  <div class="view-h"><div><h1>Money</h1><p>Private to you, even in shared workspaces</p></div>
+  <div class="view-h"><div><h1>Money</h1><p>Private to you, even in shared workspaces</p><div style="margin-top:10px">${moneyTabs("money")}</div></div>
     <div class="month-nav"><button class="icon-btn" data-action="month" data-v="-1" aria-label="Previous month">${I.left}</button><b style="min-width:130px;text-align:center">${monthName}</b><button class="icon-btn" data-action="month" data-v="1" aria-label="Next month">${I.right}</button></div></div>
   <div class="grid g-stats">
     <div class="card stat hov" style="--c:var(--red)"><div class="k"><i></i>Spent</div><div class="v num" data-count="${Math.round(spent)}">0</div><div class="d">${CURRENCY}${totalB ? ` · ${Math.round(spent / totalB * 100)}% of budget` : ""}</div></div>
@@ -1031,7 +1390,7 @@ function vInbox() {
   <div class="list">${list.map(n => `<div class="notif ${n.read ? "" : "unread"}" data-action="notif" data-id="${n.id}">${avatar(n.actor_id, true)}<div><p>${esc(n.body)}</p><small>${timeAgo(n.created_at)}${n.workspace_id && n.workspace_id !== S.wsId ? ` · ${esc(S.db.workspaces.find(w => w.id === n.workspace_id)?.name || "")}` : ""}</small></div></div>`).join("") || emptyBox("All quiet", "Assignments, status changes and updates from your team appear here.", I.bell)}</div>`;
 }
 function vMore() {
-  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending & budgets"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["settings", "⚙️", "Settings", "Profile, theme, install"]];
+  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending, budgets & funds"], ["funds", "🤝", "Funds", fundsWaiting() ? `${fundsWaiting()} waiting for you` : "Event & project budgets"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["settings", "⚙️", "Settings", "Profile, theme, install"]];
   return `<div class="view-h"><div><h1>More</h1><p>Everything else in TaskerBay</p></div></div><div class="hub">${H.map(([k, i, l, s]) => `<button data-go="${k}"><span class="ic">${i}</span><b>${l}</b><small>${s}</small></button>`).join("")}</div>`;
 }
 function vSettings() {
@@ -1080,7 +1439,7 @@ function bulkParse(text) {
     const q = parseQuick(line.replace(/^\+\s*/, ""));
     const explicitDate = !!q.due_date, explicitTime = !!q.due_time;
     return {
-      on: true, kind: "new", line, spell, title: q.title || line,
+      on: true, kind: "new", line, spell, title: q.title || line, estimate_min: q.estimate_min || null,
       area: /#(w|work|p|personal|proj)/i.test(line) ? q.area : WORK_RX.test(line) ? "Work" : (isTeam() ? "Work" : "Personal"),
       priority: /![hml123]/i.test(line) ? q.priority : URGENT_RX.test(line) ? "High" : q.priority,
       due_date: explicitDate ? q.due_date : def.date, due_time: explicitTime ? q.due_time : def.time,
@@ -1130,7 +1489,7 @@ async function bulkSave() {
   for (const r of rows) {
     try {
       if (r.kind === "update") { if (await E.statusUpdate(r.task, { note: r.note, due_date: r.due_date || null, due_time: r.due_time || null, stage: r.stage })) updated++; }
-      else { await E.createTask({ title: r.title.trim() || r.line, remind_before: parseInt($("#bk-rem")?.value ?? "0", 10), area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred }); added++; }
+      else { await E.createTask({ title: r.title.trim() || r.line, remind_before: parseInt($("#bk-rem")?.value ?? "0", 10), area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred, estimate_min: r.estimate_min || null }); added++; }
     } catch (e) { console.error(e); }
   }
   closeSheet(); U.bulk = null; buzz(20);
@@ -1147,7 +1506,7 @@ function newTaskSheet(preset = {}) {
   <form data-form="newtask">
     <div class="field"><label for="nt-title">Task</label><input class="inp" id="nt-title" required autofocus placeholder="What needs doing? Try: Payroll review fri 3pm !high"></div>
     <div class="field"><span class="lab">Due</span><div class="picks" data-quickdue><button type="button" class="pick ${preset.due_date === tk ? "on" : ""}" data-v="${tk}">Today</button><button type="button" class="pick ${preset.due_date === tm ? "on" : ""}" data-v="${tm}">Tomorrow</button><button type="button" class="pick ${!preset.due_date ? "on" : ""}" data-v="">No date</button></div><input class="inp" type="date" id="nt-due" value="${preset.due_date || ""}" aria-label="Due date" style="margin-top:6px"></div>
-    <div class="fgrid" style="margin:0 0 4px"><div class="field"><label for="nt-time">Time (optional)</label><input class="inp" type="time" id="nt-time"></div><div class="field"><label for="nt-rem">Reminder</label>${remindSelect("nt-rem", 0)}</div></div>
+    <div class="fgrid" style="margin:0 0 4px"><div class="field"><label for="nt-time">Time (optional)</label><input class="inp" type="time" id="nt-time" value="${preset.due_time || ""}"></div><div class="field"><label for="nt-rem">Reminder</label>${remindSelect("nt-rem", 0)}</div></div>
     <div class="fgrid" style="margin-top:0">
       <div class="field"><label for="nt-wf">Workflow</label><select class="inp" id="nt-wf">${E.workflows().map(w => `<option value="${w.id}" ${(preset.workflow_id || E.defaultWorkflow()?.id) === w.id ? "selected" : ""}>${esc(w.icon)} ${esc(w.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="nt-area">Area</label><select class="inp" id="nt-area">${AREAS.map(a => `<option ${(preset.area || (isTeam() ? "Work" : "Personal")) === a ? "selected" : ""}>${a}</option>`).join("")}</select></div>
@@ -1325,11 +1684,13 @@ document.addEventListener("click", async e => {
   if (p && !e.target.closest("[data-action]")) {
     const wrap = p.parentElement; $$(".pick", wrap).forEach(x => x.classList.toggle("on", x === p));
     if (wrap.hasAttribute("data-quickdue")) { const d = $("#nt-due"); if (d) d.value = p.dataset.v; }
+    if (U.sheet?.type === "fund-entry") warnLimit();
     return;
   }
   const dayBtn = e.target.closest("#sheet .daysel button"); if (dayBtn) { dayBtn.classList.toggle("on"); return; }
   const a = e.target.closest("[data-action]"); if (!a) return;
   const id = a.dataset.id, act = a.dataset.action, t = id ? task(id) : null;
+  if ((act.startsWith("fd-") || act.startsWith("free-")) && await fundAction(act, a, id)) return;
   switch (act) {
     case "add": chooser(); break;
     case "close-sheet": closeSheet(); break;
@@ -1400,7 +1761,7 @@ document.addEventListener("click", async e => {
     case "auto-del": { const r = S.db.automations.find(x => x.id === U.sheet.a.id); closeSheet(); if (r) { await remove("automations", r); toast("Rule deleted.", () => insert("automations", r)); } break; }
     case "au-add": readAutoForm(); U.sheet.a.actions.push({ type: "set_priority", value: "High" }); reopenAuto(); break;
     case "au-del": readAutoForm(); U.sheet.a.actions.splice(+a.dataset.i, 1); reopenAuto(); break;
-    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); else if (/^New sign-up request/.test(n?.body || "")) go("settings"); else if (/^💬/.test(n?.body || "")) go("chat"); break; }
+    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); else if (/^New sign-up request/.test(n?.body || "")) go("settings"); else if (/^💬/.test(n?.body || "")) go("chat"); else if (/^💰/.test(n?.body || "")) { U.fundId = null; go("funds"); } break; }
     case "read-all": for (const n of S.db.notifications.filter(n => !n.read)) update("notifications", n, { read: true }); break;
     case "palette": openPalette(); break;
     case "theme": cycleTheme(); render(); break;
@@ -1453,6 +1814,10 @@ document.addEventListener("change", async e => {
   const el = e.target;
   if (el.dataset.tfield) { await saveTaskField(el); return; }
   if (el.id === "ft-task") { FT.taskId = el.value; render(); }
+  if (el.id === "fd-who") { U.fundWho = el.value; render(); return; }
+  if (el.id === "fe-who") { warnLimit(); return; }
+  if (el.id === "fp-link") { const fe = $("#fp-email-f"); if (fe) fe.style.display = el.value === "email" ? "" : "none"; const o = el.selectedOptions[0]; if (el.value && el.value !== "email" && !$("#fp-name").value.trim()) $("#fp-name").value = o.textContent.replace(/ \(TaskerBay\)$/, ""); return; }
+  if (el.id === "free-start" || el.id === "free-end") { if (el.value) { FREE[el.id === "free-start" ? "start" : "end"] = el.value; saveFree(); render(); } return; }
   if (el.id === "nt-due") $$("#sheet [data-quickdue] .pick").forEach(x => x.classList.toggle("on", x.dataset.v === el.value));
   if (el.id === "au-trigger") $("#au-stage-f").style.display = el.value === "stage_changed" ? "" : "none";
   if (el.dataset.at !== undefined) { readAutoForm(); reopenAuto(); }
@@ -1460,6 +1825,7 @@ document.addEventListener("change", async e => {
 });
 let journalTimer;
 document.addEventListener("input", e => {
+  if (U.sheet?.type === "fund-entry" && e.target.id === "fe-amt") warnLimit();
   if (U.sheet?.type === "task" && ["upd-text", "upd-date", "upd-time"].includes(e.target.id)) { if (e.target.id !== "upd-text") e.target.dataset.manual = "1"; clearTimeout(U.updT); U.updT = setTimeout(() => { const t = task(U.sheet?.id); if (t) updatePreview(t); }, 200); }
   if (U.bulk && e.target.closest?.("#sheet")) {
     const el = e.target;
@@ -1494,6 +1860,7 @@ document.addEventListener("keydown", async e => {
 
 document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
+  if (kind?.startsWith("fd-")) { await fundSubmit(kind, f, e); return; }
   if (kind === "chat") { await sendChat(f.dataset.task || null, $("textarea", f)); return; }
   if (kind === "quick") {
     const inp = $("input", f), typed = inp.value, h = $(`[data-hint-for="${inp.id}"]`);
@@ -1510,7 +1877,7 @@ document.addEventListener("submit", async e => {
     }
     const p = parseQuick(raw.replace(/^\+\s*/, "")); if (!p.title) { toast("Type what needs doing first."); return; }
     inp.value = ""; if (h) h.innerHTML = hintFor("");
-    const nt = await E.createTask({ title: p.title, area: p.area, priority: p.priority, due_date: p.due_date, due_time: p.due_time, starred: p.starred, repeat: p.repeat, assignee_id: p.assignee_id, remind_before: p.remind_before ?? 0 });
+    const nt = await E.createTask({ title: p.title, area: p.area, priority: p.priority, due_date: p.due_date, due_time: p.due_time, starred: p.starred, repeat: p.repeat, assignee_id: p.assignee_id, remind_before: p.remind_before ?? 0, estimate_min: p.estimate_min || null });
     inp.focus(); buzz(15);
     if (sp.changes.length) toast(`Task added · spelling fixed: ${sp.changes.map(c => c.from + " → " + c.to).join(", ")}`, async () => { const orig = parseQuick(typed.replace(/^\+\s*/, "")).title; SP.learn(sp.changes.map(c => c.from)); if (task(nt.id) && orig) await E.changeTask(task(nt.id), { title: orig }); });
     else toast("Task added.");
@@ -1521,7 +1888,7 @@ document.addEventListener("submit", async e => {
     const p = parseQuick(raw), wfId = $("#nt-wf").value, wf = S.db.workflows.find(w => w.id === wfId);
     const preset = U.sheet.preset || {};
     const ntTime = $("#nt-time")?.value || p.due_time || null, ntRem = p.remind_before ?? parseInt($("#nt-rem")?.value ?? "0", 10);
-    const nt = await E.createTask({ title: p.title || raw, due_date: $("#nt-due").value || p.due_date || (ntTime ? dkey() : null), due_time: ntTime, remind_before: ntRem, area: $("#nt-area").value, priority: raw.includes("!") ? p.priority : $("#nt-pri").value, workflow_id: wfId, stage: preset.stage && wf?.stages.some(s => s.key === preset.stage) ? preset.stage : E.firstStage(wf), assignee_id: $("#nt-as")?.value || p.assignee_id || me(), starred: p.starred, repeat: p.repeat });
+    const nt = await E.createTask({ title: p.title || raw, due_date: $("#nt-due").value || p.due_date || (ntTime ? dkey() : null), due_time: ntTime, remind_before: ntRem, area: $("#nt-area").value, priority: raw.includes("!") ? p.priority : $("#nt-pri").value, workflow_id: wfId, stage: preset.stage && wf?.stages.some(s => s.key === preset.stage) ? preset.stage : E.firstStage(wf), assignee_id: $("#nt-as")?.value || p.assignee_id || me(), starred: p.starred, repeat: p.repeat, estimate_min: p.estimate_min || null });
     for (const s of $("#nt-steps").value.split("\n").map(x => x.trim()).filter(Boolean)) await E.createTask({ title: s, parent_id: nt.id, area: nt.area, assignee_id: nt.assignee_id }, 1);
     closeSheet(); buzz(15);
     if (spNt.changes.length) toast(`Task created · spelling fixed: ${spNt.changes.map(c => c.from + " → " + c.to).join(", ")}`, async () => { SP.learn(spNt.changes.map(c => c.from)); const orig = parseQuick(typedNt).title || typedNt; if (task(nt.id)) await E.changeTask(task(nt.id), { title: orig }); });
