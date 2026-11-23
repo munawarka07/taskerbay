@@ -106,7 +106,21 @@ function parseQuick(text) {
     if (lw === "today" || lw === "tod" || lw === "tonight") { out.due_date = dkey(today); if (lw === "tonight" && !out.due_time) out.due_time = "20:00"; take(i); continue; }
     if (lw === "tomorrow" || lw === "tmr" || lw === "tmrw") { out.due_date = dkey(addDays(today, 1)); take(i); continue; }
     if (lw === "nextweek" || (lw === "next" && nx === "week")) { out.due_date = dkey(addDays(today, 7)); take(i); if (lw === "next") take(i + 1); continue; }
-    if (lw === "in" && /^\d{1,3}$/.test(nx) && /^(day|days|week|weeks)$/.test(lws[i + 2] || "")) { const n = +nx * (lws[i + 2].startsWith("week") ? 7 : 1); out.due_date = dkey(addDays(today, n)); take(i, i + 1, i + 2); continue; }
+    // relative: "after 2 minutes", "in 30 mins", "within 1 hour", "in 2 days", "after a week", "in half an hour", "2 hours later"
+    {
+      const UNIT = { min: 1, mins: 1, minute: 1, minutes: 1, m: 1, hr: 60, hrs: 60, hour: 60, hours: 60, h: 60, day: 1440, days: 1440, week: 10080, weeks: 10080 };
+      const num = x => /^\d{1,4}$/.test(x) ? +x : { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, ten: 10, fifteen: 15, twenty: 20, thirty: 30 }[x];
+      let n = null, u = null, span = 0;
+      if (/^(in|after|within)$/.test(lw)) {
+        if (nx === "half" && /^(an?|hour)$/.test(lws[i + 2] || "")) { n = 30; u = 1; span = lws[i + 2] === "hour" ? 3 : 4; }
+        else { const mm = (nx || "").match(/^(\d{1,4})(mins?|minutes?|m|hrs?|hours?|h|days?|weeks?)$/); if (mm) { n = +mm[1]; u = UNIT[mm[2]]; span = 2; } else if (num(nx) != null && UNIT[lws[i + 2]]) { n = num(nx); u = UNIT[lws[i + 2]]; span = 3; } }
+      } else if (num(lw) != null && UNIT[nx] && /^(later|from)$/.test(lws[i + 2] || "")) { n = num(lw); u = UNIT[nx]; span = lws[i + 2] === "from" && lws[i + 3] === "now" ? 4 : 3; }
+      if (n != null && u) {
+        const at = new Date(Date.now() + n * u * 60e3);
+        out.due_date = dkey(at); if (u < 1440) out.due_time = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+        for (let k = 0; k < span; k++) take(i + k); i += span - 1; continue;
+      }
+    }
     if (lw === "noon" || lw === "midday") { setTime(12, 0); take(i); continue; }
     const part = { morning: 9, afternoon: 14, evening: 18 }[lw];
     if (part && (out.due_date || i > 0 && used.has(i - 1)) && !out.due_time) { setTime(part, 0); take(i); continue; }
@@ -203,7 +217,7 @@ function analyzeUpdate(t, text) {
   const before = nextM ? fixed.slice(0, nextM.index) : fixed;
   before.split(/[,.;]|\band\b|\bthen\b/i).forEach(seg => { if (!DONE_RX.test(seg)) return; const st = bestStep(seg); if (st && !res.doneSteps.includes(st)) res.doneSteps.push(st); });
   if (nextM) {
-    let phrase = nextM[1].split(/\b(remind(er)?|alert|follow ?up on|on (?=\d|mon|tue|wed|thu|fri|sat|sun|tomorrow|today|next))\b/i)[0];
+    let phrase = nextM[1].split(/\b(remind(er)?|alert|follow ?up on|(?:in|after|within) (?=\d|an? |half|one|two|three|five|ten)|\d+ ?(?:mins?|minutes?|hrs?|hours?) later|on (?=\d|mon|tue|wed|thu|fri|sat|sun|tomorrow|today|next))\b/i)[0];
     phrase = parseQuick(phrase).title.replace(/^(to|is|the|step)\s+/i, "").replace(/[\s,;:.-]+$/, "");
     if (phrase && phrase.length > 1) { const st = bestStep(phrase); res.next = st ? { step: st } : { title: phrase.charAt(0).toUpperCase() + phrase.slice(1) }; }
   }
