@@ -1,7 +1,7 @@
 // TaskerBay push sender. Called instantly by database triggers (new alerts, tasks due soon),
-// every minute by pg_cron, and on demand for a test popup.
-// Sends: 9 AM morning summary (in each person's own timezone), task reminders at each task's
-// chosen time (default 15 min before), routine reminders at their time, and new Inbox items.
+// every 20 seconds by pg_cron, and on demand for a test popup.
+// Sends: 9 AM morning summary (in each person's own timezone), a popup at each task's due time
+// (plus an earlier heads-up if chosen on the task), routine reminders at their time, and new Inbox items.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
@@ -27,8 +27,15 @@ const plusDays = (d: string, n: number) => new Date((dayNum(d) + n) * 864e5).toI
 // minutes from "now" (in the person's own time zone) until a task is due
 const minsUntil = (now: { day: string; min: number }, date: string, time: string) => (dayNum(date) - dayNum(now.day)) * 1440 + toMin(time)! - now.min;
 function reminderMsg(t: { id: string; title: string; due_time: string; due_date: string; workspace_id: string }, left: number, today: string) {
-  const when = left <= 0 ? "Due now" : left < 60 ? `Due in ${left} min` : left < 1440 && t.due_date === today ? `Due in ${Math.round(left / 60)} h` : "Due tomorrow";
+  const when = left <= 0 ? "⏰ Due now" : left < 60 ? `Due in ${left} min` : left < 1440 && t.due_date === today ? `Due in ${Math.round(left / 60)} h` : "Due tomorrow";
   return { title: when, body: `${t.title} · ${t.due_date === today ? "" : t.due_date === plusDays(today, 1) ? "tomorrow " : t.due_date + " "}${fmt(t.due_time)}`, url: `${SITE}#task=${t.id}&ws=${t.workspace_id}`, tag: `task-${t.id}` };
+}
+// "early": the heads-up chosen on the task (e.g. 1 hour before); "due": the popup at the due time itself
+function whichAlert(t: { remind_before: number; reminded_at: string | null; due_alerted_at: string | null }, left: number) {
+  if (t.remind_before < 0) return null;
+  if (left <= 0 && left >= -60 && !t.due_alerted_at) return "due";
+  if (t.remind_before > 0 && left > 0 && left <= t.remind_before && !t.reminded_at) return "early";
+  return null;
 }
 const fmt = (t: string) => { const [h, m] = t.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
 
@@ -84,17 +91,18 @@ Deno.serve(async (req) => {
 
   // Instant: a task saved with a time in the next 15 minutes
   if (reqBody.task_id) {
-    const { data: t } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, completed_at, assignee_id, created_by, workspace_id, remind_before").eq("id", reqBody.task_id).maybeSingle();
-    if (!t || t.reminded_at || t.completed_at || !t.due_time || !t.due_date || t.remind_before < 0) return json({ skipped: true });
+    const { data: t } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, due_alerted_at, completed_at, assignee_id, created_by, workspace_id, remind_before").eq("id", reqBody.task_id).maybeSingle();
+    if (!t || t.completed_at || !t.due_time || !t.due_date || t.remind_before < 0) return json({ skipped: true });
     const uid = t.assignee_id || t.created_by; if (!uid) return json({ skipped: true });
     const { data: p } = await db.from("profiles").select("timezone").eq("id", uid).maybeSingle();
     const now = localNow(p?.timezone || "Asia/Dubai"), left = minsUntil(now, t.due_date, t.due_time);
-    if (left > t.remind_before || left < -60) return json({ later: true });
+    const kind = whichAlert(t, left); if (!kind) return json({ later: true });
     const { data: subs } = await db.from("push_subscriptions").select("*").eq("user_id", uid);
     if (!subs?.length) return json({ devices: 0 });
-    const { data: claim } = await db.from("tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id).is("reminded_at", null).select("id");
+    const col = kind === "due" ? "due_alerted_at" : "reminded_at";
+    const { data: claim } = await db.from("tasks").update({ [col]: new Date().toISOString() }).eq("id", t.id).is(col, null).select("id");
     if (!claim?.length) return json({ skipped: true });
-    const sent = await sendTo(subs, reminderMsg(t, left, now.day));
+    const sent = await sendTo(subs, reminderMsg(t, kind === "due" ? Math.min(left, 0) : left, now.day));
     return json({ sent });
   }
 
@@ -112,7 +120,7 @@ Deno.serve(async (req) => {
     const first = (p.full_name || "").split(" ")[0];
 
     // Open tasks that belong to this person
-    const { data: tasks } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, assignee_id, created_by, workspace_id, remind_before")
+    const { data: tasks } = await db.from("tasks").select("id, title, due_date, due_time, reminded_at, due_alerted_at, assignee_id, created_by, workspace_id, remind_before")
       .is("completed_at", null).not("due_date", "is", null).lte("due_date", plusDays(now.day, 2))
       .or(`assignee_id.eq.${p.id},and(assignee_id.is.null,created_by.eq.${p.id})`);
     const list = tasks || [];
@@ -133,13 +141,13 @@ Deno.serve(async (req) => {
 
     // 2) Task reminders: at each task's chosen time before it's due (and up to an hour after, if missed)
     for (const t of list) {
-      if (!t.due_time || t.reminded_at || t.remind_before < 0) continue;
-      const left = minsUntil(now, t.due_date, t.due_time);
-      if (left <= t.remind_before && left >= -60) {
-        const { data: claim } = await db.from("tasks").update({ reminded_at: new Date().toISOString() }).eq("id", t.id).is("reminded_at", null).select("id");
-        if (!claim?.length) continue;
-        await sendTo(mine, reminderMsg(t, left, now.day)); stats.tasks++;
-      }
+      if (!t.due_time || t.remind_before < 0) continue;
+      const left = minsUntil(now, t.due_date, t.due_time), kind = whichAlert(t, left);
+      if (!kind) continue;
+      const col = kind === "due" ? "due_alerted_at" : "reminded_at";
+      const { data: claim } = await db.from("tasks").update({ [col]: new Date().toISOString() }).eq("id", t.id).is(col, null).select("id");
+      if (!claim?.length) continue;
+      await sendTo(mine, reminderMsg(t, kind === "due" ? Math.min(left, 0) : left, now.day)); stats.tasks++;
     }
 
     // 3) Routine reminders at their time, if not yet done today

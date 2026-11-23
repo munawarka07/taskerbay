@@ -476,3 +476,6 @@ alter table public.push_subscriptions enable row level security;
 -- the day before. Popup links carry the workspace (#task=<id>&ws=<ws>). Private storage bucket "backups" (no
 -- policies = no app access) filled nightly at 03:00 Dubai by Edge Function "backup" (pg_cron 'taskerbay-backup'),
 -- 30 days kept; the admin downloads via the same function (public.is_site_admin(uid), service_role only).
+
+-- v7 (Nov 2026): tasks.due_alerted_at; every task with a time pops up AT its due time ("Due now"), plus an optional
+-- earlier heads-up (remind_before > 0). Default remind_before is now 0. pg_cron 'taskerbay-push' runs every 20 seconds.

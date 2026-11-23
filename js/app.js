@@ -69,6 +69,8 @@ function dateFromDM(dd, mm, today) { if (dd < 1 || dd > 31 || mm < 0 || mm > 11)
 function parseQuick(text) {
   const out = { title: "", area: S.db.workspace_members.length > 1 ? "Work" : "Personal", priority: "Medium", due_date: null, due_time: null, starred: false, repeat: "", assignee_id: me() };
   const words = text.trim().split(/\s+/).filter(Boolean); const used = new Set(); const today = new Date();
+  // "remind me at 10.45 pm regarding payroll", "reminder: ...", "set a reminder ..." -> pop up exactly at that time
+  if (/^\s*(please\s+|pls\s+|kindly\s+)?(remind(er)?s?\b|set\s+(a\s+)?reminder|alert\s+me)/i.test(text)) out.remind_before = 0;
   const lws = words.map(w => w.toLowerCase().replace(/[,.;!?]+$/, ""));
   const setTime = (h, m) => { if (h < 24 && m < 60) { out.due_time = `${pad(h)}:${pad(m)}`; if (!out.due_date) out.due_date = dkey(today); return true; } return false; };
   for (let i = 0; i < words.length; i++) {
@@ -77,7 +79,10 @@ function parseQuick(text) {
     if (/^#w(ork)?$/.test(lw)) { out.area = "Work"; take(i); continue; }
     if (/^#p(ersonal)?$/.test(lw)) { out.area = "Personal"; take(i); continue; }
     if (/^#proj(ect|ects)?$/.test(lw)) { out.area = "Projects"; take(i); continue; }
-    if (/^!(h|high|1)$/.test(lw) || (lw === "urgent")) { out.priority = "High"; take(i); continue; }
+    if (/^!(h|high|1)$/.test(lw) || lw === "urgent" || lw === "asap") { out.priority = "High"; take(i); continue; }
+    if (/^(high|low|medium|normal)$/.test(lw) && /^(priority|prio|pri)$/.test(nx)) { out.priority = { high: "High", low: "Low", medium: "Medium", normal: "Medium" }[lw]; take(i, i + 1); continue; }
+    if (/^(priority|prio|pri)$/.test(lw) && /^(high|low|medium|normal)$/.test(nx)) { out.priority = { high: "High", low: "Low", medium: "Medium", normal: "Medium" }[nx]; take(i, i + 1); continue; }
+    if (/^(high|low)$/.test(lw) && i === words.length - 1 && i > 1) { out.priority = lw === "high" ? "High" : "Low"; take(i); continue; }
     if (/^!(m|med|medium|2)$/.test(lw)) { out.priority = "Medium"; take(i); continue; }
     if (/^!(l|low|3)$/.test(lw)) { out.priority = "Low"; take(i); continue; }
     if (lw === "*" || lw === "⭐") { out.starred = true; take(i); continue; }
@@ -92,8 +97,9 @@ function parseQuick(text) {
     const part = { morning: 9, afternoon: 14, evening: 18 }[lw];
     if (part && (out.due_date || i > 0 && used.has(i - 1)) && !out.due_time) { setTime(part, 0); take(i); continue; }
     // times: 3pm, 3:30pm, 15:00, "3 pm"
-    let tm = lw.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/) || lw.match(/^(\d{1,2}):(\d{2})$/);
-    if (!tm && /^\d{1,2}(:\d{2})?$/.test(lw) && /^(am|pm)$/.test(nx)) { const [h, m] = lw.split(":"); tm = [lw, h, m, nx]; take(i + 1); }
+    let tm = lw.match(/^(\d{1,2})(?:[:.](\d{2}))?(am|pm)$/);
+    if (!tm && /^\d{1,2}([:.]\d{2})?$/.test(lw) && /^(am|pm|a\.m\.?|p\.m\.?)$/.test(nx)) { const [h, m] = lw.split(/[:.]/); tm = [lw, h, m, nx.startsWith("p") ? "pm" : "am"]; take(i + 1); }
+    if (!tm) tm = lw.match(/^(\d{1,2}):(\d{2})$/) || (lws[i - 1] === "at" && lw.match(/^(\d{1,2})\.(\d{2})$/));
     if (tm) { let h = +tm[1], m = +(tm[2] || 0); if (tm[3] === "pm" && h < 12) h += 12; if (tm[3] === "am" && h === 12) h = 0; if (setTime(h, m)) { take(i); continue; } }
     // weekdays: fri, friday, next friday
     const di = DOW.findIndex(d => lw === d || lw === d + "day" || (d === "tue" && (lw === "tuesday" || lw === "tues")) || (d === "wed" && lw === "wednesday") || (d === "thu" && (lw === "thursday" || lw === "thurs")) || (d === "sat" && lw === "saturday"));
@@ -107,7 +113,14 @@ function parseQuick(text) {
   }
   // drop little linking words that only introduced a date or time ("on", "at", "by"...)
   const keep = words.filter((w, i) => { if (used.has(i)) return false; if (FILLER.has(lws[i])) { let j = i + 1; while (j < words.length && FILLER.has(lws[j]) && !used.has(j)) j++; if (j >= words.length || used.has(j)) return false; } return true; });
-  out.title = keep.join(" ").replace(/[\s,;:-]+$/, "");
+  // tidy the title: drop "remind me ... regarding", "about", leftover "priority", and similar wrappers
+  const LEAD = /^(please|pls|kindly|remind|reminder|reminders|reminder:|me|to|about|abt|for|of|re|re:|reg|set|a|an|alert|the|at|on|that|i|need|have|has)$/i;
+  const REG = /^r[ae]{1,2}g\w{0,6}d(ing|in|ng|g)?:?$/i;  // regarding, regardin, ragerdin, regrading…
+  let tw = keep.slice();
+  if (out.remind_before === 0 || REG.test(tw[0] || "")) { while (tw.length > 1 && (LEAD.test(tw[0]) || REG.test(tw[0]))) tw.shift(); }
+  tw = tw.filter((w, i) => !(/^(priority|prio)$/i.test(w)));
+  out.title = tw.join(" ").replace(/^[\s,;:-]+|[\s,;:-]+$/g, "");
+  if (out.title) out.title = out.title.charAt(0).toUpperCase() + out.title.slice(1);
   return out;
 }
 
@@ -537,6 +550,7 @@ function vTasks() {
     const G = [["overdue", "Overdue", "var(--red)"], ["today", "Today", "var(--orange)"], ["week", "Next 7 days", "var(--yellow)"], ["later", "Later", "var(--accent)"], ["none", "No date", "var(--muted)"]];
     body = G.map(([k, l, c]) => { const items = list.filter(t => E.dueStatus(t) === k); return items.length ? `<div class="group-h"><i style="--c:${c}"></i>${l}<b class="num">${items.length}</b></div><div class="list">${items.map(t => taskRow(t)).join("")}</div>` : ""; }).join("");
   } else body = `<div class="list" style="margin-top:10px">${list.map(t => taskRow(t)).join("")}</div>`;
+  if (U.taskMode === "list" && U.taskFilter === "done" && S.mode === "cloud") body += U.oldDone === S.wsId ? `<p class="muted" style="text-align:center;font-size:12.5px;margin:14px 0 0">Showing every finished task in this workspace.</p>` : `<div style="text-align:center;margin-top:14px"><button class="btn ghost" data-action="old-done">Show finished tasks older than 4 months</button></div>`;
   const counts = Object.fromEntries(Object.entries(F).map(([k, [, f]]) => [k, top.filter(f).length]));
   return `
   <div class="view-h"><div><h1>Tasks</h1><p>${counts.open} open · ${counts.done} done${isTeam() ? ` · ${S.db.workspace_members.length} people` : ""}</p></div>
@@ -655,7 +669,7 @@ async function saveTaskField(el) {
   if (f === "title") { v = v.trim(); if (!v) { el.value = t.title; return; } }
   if (f === "due_date" || f === "due_time" || f === "assignee_id" || f === "workflow_id") v = v || null;
   if (f === "estimate_min") v = v === "" ? null : Math.max(0, parseInt(v, 10) || 0);
-  if (f === "remind_before") { v = parseInt(v, 10); if ((t.remind_before ?? 15) === v) return; }
+  if (f === "remind_before") { v = parseInt(v, 10); if ((t.remind_before ?? 0) === v) return; }
   if ((t[f] ?? null) === v || (f === "due_time" && fmtTime(t[f]) === (v || ""))) return;
   await E.changeTask(t, { [f]: v });
 }
@@ -996,7 +1010,7 @@ function bulkSheet(prefill = "") {
     <p class="muted" style="margin:-4px 0 12px;font-size:13.5px">Paste a list: one task per line (bullets and numbers are fine). Dates and times in a line are picked up. Lines without a date get the default reminder below, and you can change any row.</p>
     <div class="field"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Prepare December payroll by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
     <div class="bk-def"><span class="lab">Default reminder for lines without a date</span>
-      <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time">${remindSelect("bk-rem", 15, 'aria-label="Reminder for all"')}<button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
+      <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time">${remindSelect("bk-rem", 0, 'aria-label="Reminder for all"')}<button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
       <label class="bk-chk"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label></div>
     <div id="bk-preview"></div>
     <div class="sheet-actions"><button class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" data-action="bk-save" id="bk-save" disabled>Add tasks</button></div>`, "tall wide");
@@ -1025,7 +1039,7 @@ async function bulkSave() {
   for (const r of rows) {
     try {
       if (r.kind === "update") { if (await E.statusUpdate(r.task, { note: r.note, due_date: r.due_date || null, due_time: r.due_time || null, stage: r.stage })) updated++; }
-      else { await E.createTask({ title: r.title.trim() || r.line, remind_before: parseInt($("#bk-rem")?.value ?? "15", 10), area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred }); added++; }
+      else { await E.createTask({ title: r.title.trim() || r.line, remind_before: parseInt($("#bk-rem")?.value ?? "0", 10), area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred }); added++; }
     } catch (e) { console.error(e); }
   }
   closeSheet(); U.bulk = null; buzz(20);
@@ -1033,8 +1047,8 @@ async function bulkSave() {
   if (U.view !== "tasks" && U.view !== "today") go("tasks");
 }
 
-const REMIND_OPTS = [[-1, "No reminder"], [0, "At the due time"], [5, "5 min before"], [15, "15 min before"], [30, "30 min before"], [60, "1 hour before"], [120, "2 hours before"], [1440, "1 day before"]];
-const remindSelect = (id, val, attrs = "") => `<select class="inp" id="${id}" ${attrs}>${REMIND_OPTS.map(([v, l]) => `<option value="${v}" ${(val ?? 15) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+const REMIND_OPTS = [[0, "At the due time"], [5, "5 min before + at time"], [15, "15 min before + at time"], [30, "30 min before + at time"], [60, "1 hour before + at time"], [120, "2 hours before + at time"], [1440, "1 day before + at time"], [-1, "No reminder"]];
+const remindSelect = (id, val, attrs = "") => `<select class="inp" id="${id}" ${attrs}>${REMIND_OPTS.map(([v, l]) => `<option value="${v}" ${(val ?? 0) === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
 function newTaskSheet(preset = {}) {
   U.sheet = { type: "newtask", preset };
   const tk = dkey(), tm = dkey(addDays(new Date(), 1));
@@ -1042,7 +1056,7 @@ function newTaskSheet(preset = {}) {
   <form data-form="newtask">
     <div class="field"><label for="nt-title">Task</label><input class="inp" id="nt-title" required autofocus placeholder="What needs doing? Try: Payroll review fri 3pm !high"></div>
     <div class="field"><span class="lab">Due</span><div class="picks" data-quickdue><button type="button" class="pick ${preset.due_date === tk ? "on" : ""}" data-v="${tk}">Today</button><button type="button" class="pick ${preset.due_date === tm ? "on" : ""}" data-v="${tm}">Tomorrow</button><button type="button" class="pick ${!preset.due_date ? "on" : ""}" data-v="">No date</button></div><input class="inp" type="date" id="nt-due" value="${preset.due_date || ""}" aria-label="Due date" style="margin-top:6px"></div>
-    <div class="fgrid" style="margin:0 0 4px"><div class="field"><label for="nt-time">Time (optional)</label><input class="inp" type="time" id="nt-time"></div><div class="field"><label for="nt-rem">Reminder</label>${remindSelect("nt-rem", 15)}</div></div>
+    <div class="fgrid" style="margin:0 0 4px"><div class="field"><label for="nt-time">Time (optional)</label><input class="inp" type="time" id="nt-time"></div><div class="field"><label for="nt-rem">Reminder</label>${remindSelect("nt-rem", 0)}</div></div>
     <div class="fgrid" style="margin-top:0">
       <div class="field"><label for="nt-wf">Workflow</label><select class="inp" id="nt-wf">${E.workflows().map(w => `<option value="${w.id}" ${(preset.workflow_id || E.defaultWorkflow()?.id) === w.id ? "selected" : ""}>${esc(w.icon)} ${esc(w.name)}</option>`).join("")}</select></div>
       <div class="field"><label for="nt-area">Area</label><select class="inp" id="nt-area">${AREAS.map(a => `<option ${(preset.area || (isTeam() ? "Work" : "Personal")) === a ? "selected" : ""}>${a}</option>`).join("")}</select></div>
@@ -1307,6 +1321,7 @@ document.addEventListener("click", async e => {
       catch (e) { toast(e.message); }
       a.disabled = false; a.textContent = label; break;
     }
+    case "old-done": { a.disabled = true; a.textContent = "Loading…"; try { const n = await api.loadOldDone(S.wsId); U.oldDone = S.wsId; toast(n ? `Loaded ${n} older finished task${n > 1 ? "s" : ""}.` : "No older finished tasks."); } catch (e) { toast(e.message); } render(); break; }
     case "push-on": await enablePush(); break;
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
@@ -1392,14 +1407,14 @@ document.addEventListener("submit", async e => {
     }
     const p = parseQuick(raw.replace(/^\+\s*/, "")); if (!p.title) { toast("Type what needs doing first."); return; }
     inp.value = ""; if (h) h.innerHTML = hintFor("");
-    await E.createTask({ title: p.title, area: p.area, priority: p.priority, due_date: p.due_date, due_time: p.due_time, starred: p.starred, repeat: p.repeat, assignee_id: p.assignee_id });
+    await E.createTask({ title: p.title, area: p.area, priority: p.priority, due_date: p.due_date, due_time: p.due_time, starred: p.starred, repeat: p.repeat, assignee_id: p.assignee_id, remind_before: p.remind_before ?? 0 });
     inp.focus(); buzz(15); toast("Task added.");
   }
   if (kind === "newtask") {
     const raw = $("#nt-title").value.trim(); if (!raw) return;
     const p = parseQuick(raw), wfId = $("#nt-wf").value, wf = S.db.workflows.find(w => w.id === wfId);
     const preset = U.sheet.preset || {};
-    const ntTime = $("#nt-time")?.value || p.due_time || null, ntRem = parseInt($("#nt-rem")?.value ?? "15", 10);
+    const ntTime = $("#nt-time")?.value || p.due_time || null, ntRem = p.remind_before ?? parseInt($("#nt-rem")?.value ?? "0", 10);
     const nt = await E.createTask({ title: p.title || raw, due_date: $("#nt-due").value || p.due_date || (ntTime ? dkey() : null), due_time: ntTime, remind_before: ntRem, area: $("#nt-area").value, priority: raw.includes("!") ? p.priority : $("#nt-pri").value, workflow_id: wfId, stage: preset.stage && wf?.stages.some(s => s.key === preset.stage) ? preset.stage : E.firstStage(wf), assignee_id: $("#nt-as")?.value || p.assignee_id || me(), starred: p.starred, repeat: p.repeat });
     for (const s of $("#nt-steps").value.split("\n").map(x => x.trim()).filter(Boolean)) await E.createTask({ title: s, parent_id: nt.id, area: nt.area, assignee_id: nt.assignee_id }, 1);
     closeSheet(); buzz(15); toast("Task created.");
@@ -1638,6 +1653,52 @@ async function sendChat(taskId, input) {
   setTimeout(() => scrollChat(taskId, true), 30);
 }
 
+/* ================= On-screen due alerts (while TaskerBay is open, on every device) ================= */
+const myTask = t => (t.assignee_id || t.created_by) === me();
+function dueAt(t) { if (!t.due_date || !t.due_time) return null; const [y, m, d] = t.due_date.split("-").map(Number), [h, mi] = fmtTime(t.due_time).split(":").map(Number); return new Date(y, m - 1, d, h, mi).getTime(); }
+const alertKey = (t, kind) => `tb.al.${t.id}.${t.due_date}${fmtTime(t.due_time)}.${t.remind_before ?? 0}.${kind}`;
+const seenAlert = k => { try { return !!localStorage.getItem(k); } catch (e) { return false; } };
+const markAlert = k => { try { localStorage.setItem(k, "1"); } catch (e) {} };
+function checkDueAlerts() {
+  if (!S.ready || U.dueAlert) return;
+  const now = Date.now();
+  for (const t of S.db.tasks) {
+    if (E.isDone(t) || !myTask(t) || (t.remind_before ?? 0) < 0) continue;
+    const at = dueAt(t); if (!at) continue;
+    const rb = t.remind_before ?? 0;
+    if (now >= at && now - at < 60 * 60e3 && !seenAlert(alertKey(t, "due"))) return showDueAlert(t, "due");
+    if (rb > 0 && now >= at - rb * 60e3 && now < at && !seenAlert(alertKey(t, "early"))) return showDueAlert(t, "early");
+  }
+}
+function alertBeep() {
+  try { const C = window.AudioContext || window.webkitAudioContext; const c = new C(); [0, .22, .44].forEach(o => { const g = c.createGain(), osc = c.createOscillator(); osc.type = "sine"; osc.frequency.value = 880; g.gain.setValueAtTime(0.0001, c.currentTime + o); g.gain.exponentialRampToValueAtTime(0.25, c.currentTime + o + .02); g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + o + .18); osc.connect(g).connect(c.destination); osc.start(c.currentTime + o); osc.stop(c.currentTime + o + .2); }); } catch (e) {}
+  try { navigator.vibrate?.([200, 100, 200]); } catch (e) {}
+}
+function showDueAlert(t, kind) {
+  markAlert(alertKey(t, kind)); U.dueAlert = t.id;
+  const left = Math.round((dueAt(t) - Date.now()) / 60e3);
+  const head = kind === "due" ? "⏰ Due now" : left >= 60 * 20 ? "Due tomorrow" : left >= 60 ? `Due in ${Math.round(left / 60)} h` : `Due in ${Math.max(1, left)} min`;
+  let host = $("#due-alert"); if (!host) { host = document.createElement("div"); host.id = "due-alert"; document.body.appendChild(host); }
+  host.innerHTML = `<div class="da-card ${kind}" role="alertdialog" aria-labelledby="da-t" style="--p:${PRI_C[t.priority]}">
+    <div class="da-head">${head}<span>${esc(dueLabel(t))}</span></div>
+    <div class="da-t" id="da-t">${esc(t.title)}</div>
+    ${t.status_note ? `<div class="da-note">💬 ${esc(t.status_note)}</div>` : ""}
+    <div class="da-meta"><span class="chip" style="color:${PRI_C[t.priority]}">${esc(t.priority)}</span><span class="chip">${esc(t.area)}</span></div>
+    <div class="da-actions"><button class="btn" data-da="done">✓ Done</button><button class="btn ghost" data-da="snooze">Snooze 10 min</button><button class="btn ghost" data-da="open">Open</button></div>
+    <button class="da-x" data-da="close" aria-label="Dismiss">✕</button></div>`;
+  host.classList.add("on"); alertBeep();
+  host.onclick = async e => {
+    const b = e.target.closest("[data-da]"); if (!b) return;
+    const act = b.dataset.da, cur = task(t.id); host.classList.remove("on"); U.dueAlert = null;
+    if (act === "done" && cur) { await E.completeTask(cur); toast(`Done: ${cur.title}`); }
+    if (act === "snooze" && cur) { const d = new Date(Math.max(Date.now(), dueAt(cur)) + 10 * 60e3); await E.changeTask(cur, { due_date: dkey(d), due_time: `${pad(d.getHours())}:${pad(d.getMinutes())}` }); toast(`Snoozed to ${pad(d.getHours())}:${pad(d.getMinutes())}`); }
+    if (act === "open" && cur) openTask(cur.id);
+    setTimeout(checkDueAlerts, 600);
+  };
+}
+setInterval(checkDueAlerts, 15e3);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(checkDueAlerts, 800); });
+
 /* ================= Access approval ================= */
 function pendingScreen(acc) {
   $("#root").innerHTML = `<div class="auth"><div class="auth-card">
@@ -1696,7 +1757,7 @@ async function boot() {
       if (!off && pushSupported() && Notification.permission === "granted") syncPush(true).then(() => render()).catch(() => {});
     }
     onChange(() => { if (S.mode === "claude") AI_ON = ENABLE_AI && api.hasAI(); render(); });
-    E.runOverdue(); setInterval(() => E.runOverdue(), 3600e3);
+    E.runOverdue(); setInterval(() => E.runOverdue(), 3600e3); setTimeout(checkDueAlerts, 1500);
     // Coming back to the app (phone unlocked, tab reopened, back online): fetch the latest from every device
     if (S.mode === "cloud") {
       let hiddenAt = 0, busy = false;

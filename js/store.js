@@ -140,6 +140,7 @@ const cloud = {
     return data?.result;
   },
   async updateProfile(patch) { await this.update("profiles", { id: S.user.id }, patch); },
+  async loadOldDone(ws) { const c = await sbClient(); const out = []; for (let from = 0; ; from += 1000) { const { data, error } = await c.from("tasks").select("*").eq("workspace_id", ws).lt("completed_at", since(120)).order("completed_at", { ascending: false }).range(from, from + 999); if (error) throw error; out.push(...(data || [])); if (!data || data.length < 1000) break; } out.forEach(r => localUpsert("tasks", r)); emit(); return out.length; },
   async taskWorkspace(id) { const c = await sbClient(); const { data } = await c.from("tasks").select("workspace_id").eq("id", id).maybeSingle(); return data?.workspace_id || null; },
   async downloadBackup(fresh) {
     const c = await sbClient(); const { data: { session } } = await c.auth.getSession();
