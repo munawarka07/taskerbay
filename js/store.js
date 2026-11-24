@@ -7,11 +7,11 @@ export const PK = {
   routine_items: ["id"], routine_logs: ["item_id", "day"], journal: ["user_id", "day"], focus_sessions: ["id"],
   expenses: ["id"], budgets: ["user_id", "category"],
   chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"],
-  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"]
+  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"]
 };
 const TABLES = Object.keys(PK);
 const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages"];
-const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads"];
+const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads", "calendar_events"];
 // shared money funds: visible to the creator and the people added to them (the server decides who sees what)
 const FUND_TABLES = ["fund_projects", "fund_members", "fund_entries"];
 
@@ -87,6 +87,7 @@ const cloud = {
       q("budgets", x => x.eq("user_id", uid)),
       q("notifications", x => x.eq("user_id", uid).order("created_at", { ascending: false }).limit(150)),
       q("chat_reads", x => x.eq("user_id", uid)),
+      q("calendar_events", x => x.eq("user_id", uid).order("start_at").limit(3000)).catch(() => { S.db.calendar_events = []; }),
       q("fund_projects", x => x.order("created_at", { ascending: false })),
       q("fund_members", x => x.order("created_at")),
       q("fund_entries", x => x.order("date", { ascending: false }).limit(5000))
@@ -155,6 +156,19 @@ const cloud = {
     const r = await fetch(`${SUPABASE_URL}/functions/v1/backup`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY }, body: JSON.stringify(fresh ? { action: "now" } : {}) });
     if (!r.ok) { let m = "Couldn't download the backup."; try { m = (await r.json()).error || m; } catch (e) {} throw new Error(m); }
     return { blob: await r.blob(), name: r.headers.get("X-Backup-Name") || `taskerbay-${new Date().toISOString().slice(0, 10)}-now.json` };
+  },
+  // Outlook / Microsoft 365 calendar feed (read-only, Outlook -> TaskerBay)
+  async calendarStatus() { const c = await sbClient(); const { data, error } = await c.rpc("calendar_feed_status"); if (error) throw error; return (Array.isArray(data) ? data[0] : data) || null; },
+  async calendarSet(url) { const c = await sbClient(); const { error } = await c.rpc("calendar_feed_set", { feed_url: url }); if (error) throw new Error(error.message); },
+  async calendarClear() { const c = await sbClient(); const { error } = await c.rpc("calendar_feed_clear"); if (error) throw new Error(error.message); S.db.calendar_events = []; emit(); },
+  async calendarSync() {
+    const c = await sbClient(); const { data: { session } } = await c.auth.getSession();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/calendar`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY }, body: "{}" });
+    const out = await r.json().catch(() => ({}));
+    const { data } = await c.from("calendar_events").select("*").eq("user_id", S.user.id).order("start_at").limit(3000);
+    if (data) { S.db.calendar_events = data; emit(); }
+    if (!r.ok || out.ok === false) throw new Error(out.error || "Couldn't read the calendar.");
+    return out;
   },
   async reloadFunds() {
     const c = await sbClient();
@@ -297,6 +311,20 @@ const demo = {
     }
     dsave();
   },
+  // sample Outlook meetings so the calendar feature can be tried in the demo
+  async calendarStatus() { return demoDB._cal ? { connected: true, host: "outlook.office365.com (sample)", last_synced_at: new Date().toISOString(), last_error: null, event_count: (demoDB.calendar_events || []).length } : null; },
+  async calendarSet() {
+    demoDB._cal = true; const uid = demoDB._uid, ev = [];
+    const at = (dd, h, m) => { const d = new Date(); d.setDate(d.getDate() + dd); d.setHours(h, m, 0, 0); return d; };
+    const add = (dd, h, m, mins, title, location = "", busy = "BUSY") => { const s = at(dd, h, m); ev.push({ id: uuid(), user_id: uid, uid: uuid(), title, location, start_at: s.toISOString(), end_at: new Date(s.getTime() + mins * 6e4).toISOString(), all_day: false, busy, recurring: false }); };
+    for (let dd = 0; dd < 14; dd++) { const d = at(dd, 9, 0); if ([0, 6].includes(d.getDay())) continue; add(dd, 9, 15, 15, "Daily HR stand-up", "Teams"); }
+    add(0, 11, 0, 60, "Payroll review with Finance", "Room 4"); add(0, 15, 30, 30, "Interview: HR Assistant", "Teams");
+    add(1, 10, 0, 90, "Policy workshop", "Training room"); add(1, 14, 0, 30, "1:1 with manager"); add(2, 12, 0, 60, "Vendor demo: insurance", "Teams");
+    add(3, 16, 0, 45, "Recruitment pipeline review"); add(4, 13, 0, 60, "Lunch", "", "FREE");
+    demoDB.calendar_events = ev; dsave(); S.db.calendar_events = ev.map(r => ({ ...r })); emit();
+  },
+  async calendarClear() { demoDB._cal = false; demoDB.calendar_events = []; dsave(); S.db.calendar_events = []; emit(); },
+  async calendarSync() { return { ok: true, n: (demoDB.calendar_events || []).length }; },
   async rpc(name, args) {
     if (name === "create_workspace") {
       const id = uuid();

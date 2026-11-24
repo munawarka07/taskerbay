@@ -406,7 +406,7 @@ function render(animate = false) {
 }
 function go(view, opts = {}) {
   if (!VIEWS[view]) view = "today";
-  if (view === "settings") U.access = null; // always show fresh access requests
+  if (view === "settings") { U.access = null; U.cal = undefined; } // always show fresh access requests and calendar status
   U.view = view; Object.assign(U, opts);
   if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   render(true); scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
@@ -540,6 +540,7 @@ function vToday(animate) {
         <div class="list">${focus.length ? focus.slice(0, 8).map(t => taskRow(t, { showParent: true })).join("") : emptyBox("Clear runway", "Tap ＋ to add a task, or ⭐ star one to focus on it today.")}</div>
         ${focus.length ? `<div class="swipe-hint">Swipe right to finish · left to delete · tap to open</div>` : ""}
       </div>
+      ${meetingsCard()}
       ${freeCard()}
       ${review.length || waiting.length ? `<div class="card"><div class="card-h"><h2>👥 Team pulse</h2><button class="link" data-go="team">Updates</button></div><div class="list">
         ${review.slice(0, 4).map(t => taskRow(t)).join("")}${waiting.filter(t => !review.includes(t)).slice(0, 4).map(t => taskRow(t)).join("")}</div></div>` : ""}
@@ -587,27 +588,28 @@ function vPlan() {
   const timed = dayTasks(sel).filter(t => t.due_time);
   const allday = dayTasks(sel).filter(t => !t.due_time);
   const rt = routineToday(selDate);
-  const items = [...timed.map(t => ({ time: fmtTime(t.due_time), t })), ...rt.filter(r => r.time_of_day).map(r => ({ time: fmtTime(r.time_of_day), r }))].sort((a, b) => a.time.localeCompare(b.time));
+  const mtgs = meetingsOn(sel);
+  const items = [...timed.map(t => ({ time: fmtTime(t.due_time), t })), ...rt.filter(r => r.time_of_day).map(r => ({ time: fmtTime(r.time_of_day), r })), ...mtgs.filter(m => !m.allDay).map(m => ({ time: hm(m.sm), m }))].sort((a, b) => a.time.localeCompare(b.time));
   const nowT = `${pad(new Date().getHours())}:${pad(new Date().getMinutes())}`;
   let nowPlaced = sel !== tk;
   const unscheduled = S.db.tasks.filter(t => !t.due_date && !t.parent_id && !E.isDone(t)).sort(sortTasks);
   const tl = items.map(it => {
     let line = "";
     if (!nowPlaced && it.time > nowT) { nowPlaced = true; line = `<div class="tl now"><div class="tm">${nowT}</div><div class="now-line"></div></div>`; }
-    const body = it.t ? taskRow(it.t) : `<button class="rt ${logged(it.r, sel) ? "on" : ""}" data-action="routine" data-id="${it.r.id}" ${sel !== tk ? "disabled" : ""}><span class="ic">${esc(it.r.icon)}</span><span class="t">${esc(it.r.name)}</span><span class="st">Routine</span></button>`;
+    const body = it.m ? meetRow(it.m) : it.t ? taskRow(it.t) : `<button class="rt ${logged(it.r, sel) ? "on" : ""}" data-action="routine" data-id="${it.r.id}" ${sel !== tk ? "disabled" : ""}><span class="ic">${esc(it.r.icon)}</span><span class="t">${esc(it.r.name)}</span><span class="st">Routine</span></button>`;
     return line + `<div class="tl"><div class="tm">${it.time}</div><div>${body}</div></div>`;
   }).join("") + (!nowPlaced ? `<div class="tl now"><div class="tm">${nowT}</div><div class="now-line"></div></div>` : "");
   return `
   <div class="view-h"><div><h1>Planner</h1><p>${selDate.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</p></div>
     <div class="month-nav"><button class="icon-btn" data-action="week" data-v="-1" aria-label="Previous week">${I.left}</button><button class="btn ghost" data-action="week" data-v="0" style="padding:8px 12px">This week</button><button class="icon-btn" data-action="week" data-v="1" aria-label="Next week">${I.right}</button></div></div>
   <div class="card"><div class="weekstrip">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !E.isDone(t) && !t.parent_id); const od = ts.some(t => E.dueStatus(t) === "overdue"); return `<button class="day ${k === tk ? "today" : ""} ${sel === k ? "on" : ""}" data-action="plan-day" data-v="${k}"><small>${d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><span class="dots">${ts.slice(0, 4).map(() => `<i class="${od ? "r" : ""}"></i>`).join("")}</span></button>`; }).join("")}</div></div>
-  <div class="pl-cols">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !t.parent_id).sort(sortTasks); return `<div class="pl-day ${k === tk ? "today" : ""}" data-drop-day="${k}"><h4>${d.toLocaleDateString("en-GB", { weekday: "short" })}<b>${d.getDate()}</b></h4>${ts.map(t => `<div class="pl-item ${E.isDone(t) ? "done" : ""}" draggable="true" data-drag-task="${t.id}" data-action="open-task" data-id="${t.id}" style="--p:${PRI_C[t.priority]}">${t.due_time ? `<small>${fmtTime(t.due_time)}</small>` : ""}${esc(t.title)}</div>`).join("")}<button class="add-card" style="color:var(--muted);font-weight:700;font-size:12px;padding:6px;text-align:left" data-action="new-task" data-due="${k}">＋ Add</button></div>`; }).join("")}</div>
+  <div class="pl-cols">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !t.parent_id).sort(sortTasks); return `<div class="pl-day ${k === tk ? "today" : ""}" data-drop-day="${k}"><h4>${d.toLocaleDateString("en-GB", { weekday: "short" })}<b>${d.getDate()}</b></h4>${meetingsOn(k).filter(m => !m.allDay).map(m => `<div class="pl-item pl-meet" data-action="plan-day" data-v="${k}"><small>${hm(m.sm)}</small>${esc(m.title)}</div>`).join("")}${ts.map(t => `<div class="pl-item ${E.isDone(t) ? "done" : ""}" draggable="true" data-drag-task="${t.id}" data-action="open-task" data-id="${t.id}" style="--p:${PRI_C[t.priority]}">${t.due_time ? `<small>${fmtTime(t.due_time)}</small>` : ""}${esc(t.title)}</div>`).join("")}<button class="add-card" style="color:var(--muted);font-weight:700;font-size:12px;padding:6px;text-align:left" data-action="new-task" data-due="${k}">＋ Add</button></div>`; }).join("")}</div>
   <div class="grid g-2 mt">
     <div class="card"><div class="card-h"><h2>⏰ Timeline</h2><button class="link" data-action="new-task" data-due="${sel}">＋ Add</button></div>
-      ${items.length ? `<div class="timeline2">${tl}</div>` : emptyBox("Nothing scheduled", "Give tasks a time (e.g. <b style='display:inline'>3pm</b>) and add routine times to see them here.", I.plan)}
+      ${items.length ? `<div class="timeline2">${tl}</div>` : emptyBox("Nothing scheduled", "Give tasks a time (e.g. <b style='display:inline'>3pm</b>) and add routine times to see them here." + ((S.db.calendar_events || []).length ? "" : " Connect your Outlook calendar in Settings to see meetings too."), I.plan)}
     </div>
     <div class="grid" style="gap:14px;align-content:start">
-      <div class="card"><div class="card-h"><h2>📌 All day</h2><span class="sub">${allday.length}</span></div><div class="list">${allday.length ? allday.map(t => taskRow(t)).join("") : `<p class="muted" style="margin:0">No all-day tasks.</p>`}</div></div>
+      <div class="card"><div class="card-h"><h2>📌 All day</h2><span class="sub">${allday.length + mtgs.filter(m => m.allDay).length}</span></div><div class="list">${mtgs.filter(m => m.allDay).map(meetRow).join("")}${allday.length ? allday.map(t => taskRow(t)).join("") : mtgs.some(m => m.allDay) ? "" : `<p class="muted" style="margin:0">No all-day tasks.</p>`}</div></div>
       ${aiPlanCard()}
       <div class="card"><div class="card-h"><h2>🗂️ Not scheduled</h2><span class="sub">${unscheduled.length}</span></div>
         <div class="list">${unscheduled.slice(0, 8).map(t => `<div class="li"><div class="grow" data-action="open-task" data-id="${t.id}" style="cursor:pointer"><b>${esc(t.title)}</b><small>${esc(t.area)} · ${esc(E.stageOf(t).name)}</small></div><button class="btn ghost" data-action="schedule" data-id="${t.id}" data-v="${sel}" style="padding:7px 10px">→ ${sel === tk ? "Today" : parseKey(sel).toLocaleDateString("en-GB", { weekday: "short" })}</button></div>`).join("") || `<p class="muted" style="margin:0">Everything has a date. 👏</p>`}</div></div>
@@ -823,7 +825,30 @@ function dayBusy(k) {
   const items = S.db.tasks.filter(t => t.due_date === k && t.due_time && !E.isDone(t) && mine(t))
     .map(t => { const s = toMin(fmtTime(t.due_time)), d = taskMins(t); return { s, e: s + d, d, label: t.title, id: t.id, quick: d <= 15 }; });
   routineToday(parseKey(k)).filter(r => r.time_of_day).forEach(r => { const s = toMin(fmtTime(r.time_of_day)); items.push({ s, e: s + 15, d: 15, label: `${r.icon} ${r.name}`, quick: true }); });
+  meetingsOn(k).filter(m => m.busy !== "FREE" && (!m.allDay || m.busy === "OOF" || m.busy === "BUSY")).forEach(m => items.push(m.allDay ? { s: 0, e: 1440, d: 1440, label: `📅 ${m.title} (all day)`, meet: true } : { s: m.sm, e: m.em, d: m.em - m.sm, label: `📅 ${m.title}`, meet: true }));
   return items.sort((a, b) => a.s - b.s);
+}
+/* Outlook / Microsoft 365 meetings (read-only copy from the connected calendar) */
+function meetingsOn(k) {
+  const d0 = parseKey(k).getTime(), d1 = addDays(parseKey(k), 1).getTime(), out = [];
+  for (const e of S.db.calendar_events || []) {
+    if (e.all_day) { const sd = String(e.start_at).slice(0, 10), ed = String(e.end_at).slice(0, 10); if (sd <= k && k < (ed > sd ? ed : sd + "~")) out.push({ ...e, allDay: true }); continue; }
+    const s = new Date(e.start_at).getTime(), en = new Date(e.end_at).getTime();
+    if (en <= d0 || s >= d1 || (en === s && (s < d0 || s >= d1))) continue;
+    out.push({ ...e, sm: Math.max(0, Math.round((s - d0) / 6e4)), em: Math.min(1440, Math.max(Math.round((en - d0) / 6e4), Math.round((s - d0) / 6e4) + 1)) });
+  }
+  return out.sort((a, b) => (b.allDay ? 1 : 0) - (a.allDay ? 1 : 0) || (a.sm ?? 0) - (b.sm ?? 0));
+}
+const hm = n => fmtTime(minT(Math.min(n, 1439)));
+const meetRow = m => { const now = new Date(), nm = now.getHours() * 60 + now.getMinutes(), live = !m.allDay && m.start_at.slice(0, 10) <= dkey() && new Date(m.start_at) <= now && now < new Date(m.end_at);
+  return `<div class="mtg ${m.busy === "FREE" ? "free" : ""} ${live ? "live" : ""}"><div class="mt-t">${m.allDay ? "All day" : `${hm(m.sm)}<small>${hm(m.em)}</small>`}</div><div class="mt-b"><b>${esc(m.title)}</b><small>${[m.location, m.busy === "TENTATIVE" ? "Tentative" : m.busy === "OOF" ? "Out of office" : m.busy === "FREE" ? "Free" : "", m.recurring ? "Repeats" : ""].filter(Boolean).map(esc).join(" · ")}</small></div>${live ? `<span class="chip ok">Now</span>` : ""}</div>`; };
+function meetingsCard() {
+  if (!(S.db.calendar_events || []).length) return "";
+  const k = dkey(), list = meetingsOn(k), now = new Date(), nm = now.getHours() * 60 + now.getMinutes();
+  const left = list.filter(m => m.allDay || m.em > nm), next = list.find(m => !m.allDay && m.sm > nm);
+  return `<div class="card"><div class="card-h"><h2>📅 Today's meetings</h2><span class="sub">${list.length ? (next ? `Next at ${hm(next.sm)}` : left.length ? "" : "All done") : "None"}</span></div>
+    ${list.length ? `<div class="mtgs">${list.map(meetRow).join("")}</div>` : `<p class="muted" style="margin:0">No meetings in your Outlook calendar today.</p>`}
+    <p class="muted" style="font-size:12px;margin:8px 0 0">From your Outlook calendar · read only</p></div>`;
 }
 function freeSlots(k) {
   const S0 = toMin(FREE.start), S1 = Math.max(toMin(FREE.end), S0 + 30);
@@ -852,20 +877,20 @@ function freeCard() {
   const bar = `<div class="fbar" role="img" aria-label="Free and busy times">
     ${from > S0 ? `<i class="past" style="left:0;width:${pct(from)}%"></i>` : ""}
     ${gaps.map(([a, b]) => `<i class="${b - a >= FREE.min ? "free" : "gap"}" style="left:${pct(a)}%;width:${pct(b) - pct(a)}%" title="Free ${fmt12(a)} – ${fmt12(b)}"></i>`).join("")}
-    ${busy.filter(b => b.e > S0 && b.s < S1).map(b => `<i class="busy ${b.quick ? "quick" : ""}" style="left:${pct(b.s)}%;width:${Math.max(.8, pct(b.e) - pct(b.s))}%" title="${esc(b.label)} ${fmt12(b.s)}"></i>`).join("")}
+    ${busy.filter(b => b.e > S0 && b.s < S1).map(b => `<i class="busy ${b.meet ? "meet" : b.quick ? "quick" : ""}" style="left:${pct(b.s)}%;width:${Math.max(.8, pct(b.e) - pct(b.s))}%" title="${esc(b.label)} ${fmt12(b.s)}"></i>`).join("")}
   </div><div class="fticks"><span>${fmt12(S0)}</span><span>${fmt12(S0 + Math.round(span / 2 / 30) * 30)}</span><span>${fmt12(S1)}</span></div>`;
   return `<div class="card free-card">
     <div class="card-h"><h2>🕒 Free time</h2><span class="sub">${total ? `${durTxt(total)} free` : "Fully booked"}</span></div>
     <div class="fdays">${[...Array(7)].map((_, i) => { const d = addDays(new Date(), i), dk = dkey(d), f = freeSlots(dk).slots.reduce((s, [a, b]) => s + b - a, 0); return `<button class="${dk === k ? "on" : ""} ${[0, 6].includes(d.getDay()) ? "wkend" : ""}" data-action="free-day" data-v="${dk}"><small>${i === 0 ? "Today" : d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><em>${f ? durTxt(f) : "full"}</em></button>`; }).join("")}</div>
     ${bar}
-    <div class="flegend"><span><i class="free"></i>Free</span><span><i class="busy"></i>Busy</span><span><i class="busy quick"></i>Quick task</span>${[0, 6].includes(dow) ? `<span class="chip">Weekend</span>` : ""}</div>
+    <div class="flegend"><span><i class="free"></i>Free</span><span><i class="busy"></i>Busy</span><span><i class="busy quick"></i>Quick task</span>${busy.some(b => b.meet) ? `<span><i class="busy meet"></i>Meeting</span>` : ""}${[0, 6].includes(dow) ? `<span class="chip">Weekend</span>` : ""}</div>
     <div class="slots">${slots.length ? slots.map(([a, b]) => `<div class="slot"><div><b>${fmt12(a)} – ${fmt12(b)}</b><small>${durTxt(b - a)} free</small></div><button class="btn ghost" data-action="free-book" data-d="${k}" data-t="${minT(a)}">Book</button></div>`).join("")
       : `<p class="muted" style="margin:4px 0">No free slot of ${durTxt(FREE.min)} or more ${k === tk ? "left today" : `on ${dayName(k)}`} between ${fmt12(S0)} and ${fmt12(S1)}.</p>`}</div>
     ${busy.length ? `<details class="fbusy"><summary>Busy: ${busy.length} item${busy.length > 1 ? "s" : ""}</summary>${busy.map(b => `<div ${b.id ? `data-action="open-task" data-id="${b.id}" role="button" tabindex="0"` : ""}><b>${fmt12(b.s)}</b><span>${esc(b.label)}</span><small>${durTxt(b.d)}</small></div>`).join("")}</details>` : ""}
     <div class="fact"><button class="btn" data-action="free-share" data-v="day">Share ${k === tk ? "today" : dayName(k)}</button><button class="btn ghost" data-action="free-share" data-v="week">Share next 7 days</button></div>
     <details class="fset"><summary>Working hours &amp; slot length</summary><div class="fgrid" style="margin-top:8px"><div class="field"><label for="free-start">From</label><input class="inp" type="time" id="free-start" value="${FREE.start}"></div><div class="field"><label for="free-end">To</label><input class="inp" type="time" id="free-end" value="${FREE.end}"></div></div>
       <div class="seg" role="group" aria-label="Shortest slot">${[15, 30, 60, 120].map(m => `<button class="${FREE.min === m ? "on" : ""}" data-action="free-min" data-v="${m}">${durTxt(m)}+</button>`).join("")}</div>
-      <p class="muted" style="font-size:12.5px;margin:8px 0 0">Tasks block their “Takes” time (30 min if not set, 15 min for quick ones). Write “for 1 hour” or “quick” when adding a task.</p></details>
+      <p class="muted" style="font-size:12.5px;margin:8px 0 0">Tasks block their “Takes” time (30 min if not set, 15 min for quick ones). Write “for 1 hour” or “quick” when adding a task.${(S.db.calendar_events || []).length ? " Outlook meetings marked Busy, Tentative or Away also count." : " Connect your Outlook calendar in Settings so meetings count too."}</p></details>
   </div>`;
 }
 
@@ -1400,6 +1425,7 @@ function vSettings() {
     <div class="card"><div class="card-h"><h2>Profile</h2></div>
       <form data-form="profile"><div class="field"><label for="pf-name">Your name</label><input class="inp" id="pf-name" value="${esc(p.full_name || "")}"></div><button class="btn" type="submit">Save</button></form></div>
     ${accessCard()}
+    ${calendarCard()}
     ${pushCard()}
     ${backupCard()}
     <div class="card"><div class="card-h"><h2>Appearance</h2></div><div class="seg">${THEMES.map(t => `<button class="${theme === t ? "on" : ""}" data-action="set-theme" data-v="${t}">${t === "auto" ? "Auto" : t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div></div>
@@ -1419,7 +1445,8 @@ function chooser() {
   <div class="choose"><button data-action="new-task"><span class="ic">${I.tasks}</span><b>Task</b><small>With steps, stage & owner</small></button>
   <button data-action="new-expense"><span class="ic g">${I.money}</span><b>Expense</b><small>Money in or out</small></button>
   <button data-action="routine-new"><span class="ic">${I.routine}</span><b>Routine item</b><small>A daily habit</small></button>
-  <button data-action="auto-new"><span class="ic g">${I.bolt}</span><b>Automation</b><small>A rule that runs itself</small></button></div>
+  <button data-action="auto-new"><span class="ic g">${I.bolt}</span><b>Automation</b><small>A rule that runs itself</small></button>
+  <button data-action="bulk-import"><span class="ic">📄</span><b>From Excel / list</b><small>Import a file or paste many</small></button></div>
   ${AI_ON ? `<button class="ai-btn" data-action="capture" style="width:100%;justify-content:center;padding:14px;margin-top:4px"><span class="spark">✨</span>Just say it, Claude sorts it out</button>` : ""}`);
 }
 /* ================= Bulk add: paste many lines, each becomes a task ================= */
@@ -1452,15 +1479,134 @@ function bulkParse(text) {
   if (news.length > 2 && work >= news.length / 2) news.forEach(r => { if (r.guessed) r.area = "Work"; });
   return rows;
 }
+
+/* ================= Import tasks from an Excel / CSV file (read on the device, never uploaded) ================= */
+const COLS = {
+  title: /^(tasks?|title|subject|descriptions?|activit(y|ies)|items?|actions?( items?)?|to ?dos?|work|particulars|issues?|requirements?|what|task name|task details|job)$|task|description|activity|action item|particular/i,
+  date: /^(due|dates?|deadlines?|target|by when|due on|when|day)$|due ?date|deadline|target date|end date|follow ?up date|reminder date|due by|completion date|date/i,
+  time: /^(time|hours?|at|due time|reminder time|start time)$|time/i,
+  priority: /priority|urgen|importance|severity/i,
+  area: /^(area|category|type|department|dept|section|group)$/i,
+  owner: /^(owner|assigned( to)?|assignee|responsible( person)?|pic|done by|handled by|action by|person in charge)$/i,
+  who: /^(employee|employee name|staff|staff name|name|candidate|client|customer|person|emp|emp name|full name|vendor|company)$/i,
+  status: /^(status|progress|state|current status|done\??|completed\??)$/i,
+  notes: /notes?|remarks?|comments?|details|update|info|description of work/i,
+};
+const DONE_CELL = /^(done|completed?|closed|finished|resolved|yes|✓|✔|complete)$/i;
+const cellText = c => c == null ? "" : c.t === "bool" ? (c.v ? "Yes" : "No") : c.t === "num" ? String(Math.round(c.v * 1e6) / 1e6) : String(c.v);
+function guessHeader(rows) {
+  const letters = n => { let s = ""; n++; while (n) { s = String.fromCharCode(65 + (n - 1) % 26) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const filled = rows.map((r, i) => [i, r]).filter(([, r]) => r && r.some(c => c && cellText(c).trim()));
+  if (!filled.length) return { headerRow: -1, headers: [] };
+  const width = Math.max(...filled.slice(0, 60).map(([, r]) => r.length), 0);
+  // the header is the row (near the top) with the most cells that look like column names; titles above it are skipped
+  let best = null;
+  for (const [i, r] of filled.slice(0, 20)) {
+    const cells = r.filter(Boolean); if (cells.length < 2 && width > 1) continue;
+    if (!cells.every(c => c.t === "text")) continue;
+    const score = cells.filter(c => Object.values(COLS).some(rx => rx.test(cellText(c).trim()))).length;
+    if (score && (!best || score > best.score)) best = { i, score };
+  }
+  if (!best) { // no recognised names: treat the first row as names only if it's all text and the rows below are not
+    const [i, r] = filled.find(([, r]) => r.filter(Boolean).length >= Math.min(2, width)) || filled[0];
+    const below = filled.filter(([k]) => k > i).slice(0, 10);
+    if (r.every(c => !c || c.t === "text") && below.some(([, x]) => x.some(c => c && c.t !== "text"))) best = { i };
+  }
+  if (!best) return { headerRow: filled[0][0] - 1, headers: [...Array(width)].map((_, k) => `Column ${letters(k)}`) };
+  const r = rows[best.i];
+  return { headerRow: best.i, headers: [...Array(width)].map((_, k) => r[k] && cellText(r[k]).trim() ? cellText(r[k]).trim() : `Column ${letters(k)}`) };
+}
+function guessMap(headers, body) {
+  const used = new Set(), pick = (key, test) => { const k = headers.findIndex((h, i) => !used.has(i) && test(h, i)); if (k >= 0) used.add(k); return k; };
+  const kindOf = i => { const cs = body.map(r => r[i]).filter(Boolean).slice(0, 40); const cnt = t => cs.filter(c => c.t === t).length; return { n: cs.length, date: cnt("date") + cnt("datetime"), time: cnt("time"), text: cnt("text"), avg: cs.filter(c => c.t === "text").reduce((s, c) => s + cellText(c).length, 0) / Math.max(1, cnt("text")) }; };
+  const m = {};
+  m.title = pick("title", h => COLS.title.test(h) && !COLS.date.test(h));
+  m.date = pick("date", (h, i) => COLS.date.test(h) && !/time/i.test(h)); if (m.date < 0) m.date = pick("date", (h, i) => { const k = kindOf(i); return k.n && (k.date) / k.n > .6; });
+  m.time = pick("time", (h, i) => COLS.time.test(h) || (kindOf(i).n && kindOf(i).time / kindOf(i).n > .6));
+  m.priority = pick("priority", h => COLS.priority.test(h));
+  m.area = pick("area", h => COLS.area.test(h));
+  m.owner = pick("owner", h => COLS.owner.test(h));
+  m.who = pick("who", h => COLS.who.test(h));
+  m.status = pick("status", h => COLS.status.test(h));
+  m.notes = pick("notes", h => COLS.notes.test(h));
+  if (m.title < 0) { // no "Task" column: use the column with the longest text
+    let best = -1, bl = 0; headers.forEach((h, i) => { if (used.has(i)) return; const k = kindOf(i); if (k.text && k.avg > bl) { bl = k.avg; best = i; } });
+    if (best >= 0) { m.title = best; used.add(best); } else if (m.who >= 0) { m.title = m.who; m.who = -1; }
+  }
+  return m;
+}
+function fileRows() {
+  const F = U.bulk.file, def = U.bulk.def, sh = F.sheets[F.sheet], m = F.map;
+  const body = sh.rows.slice(F.headerRow + 1);
+  const open = new Set(S.db.tasks.filter(t => !E.isDone(t)).map(t => t.title.trim().toLowerCase()));
+  const person = name => { const n = String(name || "").trim().toLowerCase(); if (!n) return null; return S.db.profiles.find(p => { const f = (p.full_name || "").toLowerCase(); return f && (f === n || f.split(" ")[0] === n.split(" ")[0]); }) || null; };
+  const out = [];
+  for (const r of body) {
+    if (!r || !r.some(c => c && cellText(c).trim())) continue;
+    const get = i => i >= 0 ? r[i] : null, txt = i => cellText(get(i)).replace(/\s+/g, " ").trim();
+    let title = txt(m.title); const who = txt(m.who);
+    if (!title && !who) continue;
+    if (who && title && !title.toLowerCase().includes(who.toLowerCase())) title = `${who} – ${title}`; else if (!title) title = who;
+    if (U.bulk.fixSpell !== false) title = SP.fix(title).text;
+    // date and time from their cells (real Excel dates, or text such as "25/11", "tomorrow 3pm")
+    let due_date = "", due_time = "";
+    const dc = get(m.date), tc = get(m.time);
+    if (dc) { if (dc.t === "date") due_date = dc.v; else if (dc.t === "datetime") { due_date = dc.v.slice(0, 10); due_time = dc.v.slice(11, 16); } else if (dc.t === "text") { const q = parseQuick(cellText(dc)); due_date = q.due_date || ""; due_time = q.due_time || due_time; } }
+    if (tc) { if (tc.t === "time") due_time = tc.v; else if (tc.t === "datetime") due_time = tc.v.slice(11, 16); else if (tc.t === "num" && tc.v >= 0 && tc.v < 1) { const mins = Math.round(tc.v * 1440); due_time = `${pad(Math.floor(mins / 60))}:${pad(mins % 60)}`; } else { const q = parseQuick("at " + cellText(tc)); due_time = q.due_time || due_time; } }
+    const q = parseQuick(title); // a date written inside the task text itself
+    if (!due_date && q.due_date) { due_date = q.due_date; if (!due_time && q.due_time) due_time = q.due_time; title = q.title || title; }
+    const pr = txt(m.priority).toLowerCase(), ar = txt(m.area), notesTxt = txt(m.notes), stTxt = txt(m.status), ow = txt(m.owner), op = person(ow);
+    const priority = /high|urgent|critical|^1$|^h$|top|asap/.test(pr) ? "High" : /low|^3$|^l$|minor/.test(pr) ? "Low" : URGENT_RX.test(title) ? "High" : "Medium";
+    const area = AREAS.find(a => a.toLowerCase() === ar.toLowerCase()) || (/work|office|hr|payroll|admin|finance/i.test(ar) ? "Work" : /personal|home|family/i.test(ar) ? "Personal" : WORK_RX.test(title) || isTeam() ? "Work" : "Personal");
+    const doneInFile = DONE_CELL.test(stTxt) || (m.status < 0 && DONE_CELL.test(notesTxt));
+    const exists = open.has(title.trim().toLowerCase());
+    const extra = [notesTxt && !DONE_CELL.test(notesTxt) ? notesTxt : "", stTxt && !doneInFile && !/^(open|new|pending|not started|to ?do|-)$/i.test(stTxt) ? `Status: ${stTxt}` : "", ow && !op ? `Owner: ${ow}` : ""].filter(Boolean).join("\n");
+    out.push({ on: !doneInFile && !exists, kind: "new", line: title, spell: [], title: title.charAt(0).toUpperCase() + title.slice(1), area, priority,
+      due_date: due_date || def.date, due_time: due_time || def.time, auto: !due_date || !due_time, assignee_id: op?.id || null, notes: extra,
+      flag: doneInFile ? "Done in file" : exists ? "Already in TaskerBay" : "" });
+    if (out.length >= 500) break;
+  }
+  return out;
+}
+async function bulkFile(file) {
+  const host = $("#bk-file-info"); if (host) host.innerHTML = `<p class="muted" style="margin:6px 0">Reading ${esc(file.name)}…</p>`;
+  try {
+    const { readSheetFile } = await import("./sheetread.js");
+    const { sheets } = await readSheetFile(file);
+    const usable = sheets.filter(s => s.rows.some(r => r && r.some(Boolean)));
+    if (!usable.length) throw new Error("No data found in that file.");
+    const sheet = 0, g = guessHeader(usable[0].rows);
+    U.bulk.file = { name: file.name, sheets: usable, sheet, headerRow: g.headerRow, headers: g.headers };
+    U.bulk.file.map = guessMap(g.headers, usable[0].rows.slice(g.headerRow + 1));
+    if (U.bulk.file.map.title < 0) throw new Error("Couldn't find a column with task text in that file.");
+    U.bulk.allowUpdates = false;
+    bulkFilePanel(); bulkRefresh(true);
+  } catch (e) { U.bulk.file = null; if (host) host.innerHTML = `<p class="flag" style="margin:6px 0">${esc(e.message || "Couldn't read that file.")}</p>`; }
+}
+function bulkFilePanel() {
+  const F = U.bulk.file, host = $("#bk-file-info"); if (!host) return;
+  $("#bk-text-f")?.classList.toggle("hidden", !!F); $("#bk-upd-l")?.classList.toggle("hidden", !!F);
+  if (!F) { host.innerHTML = ""; return; }
+  const opts = sel => `<option value="-1">—</option>` + F.headers.map((h, i) => `<option value="${i}" ${sel === i ? "selected" : ""}>${esc(h)}</option>`).join("");
+  const f = (key, label) => `<label class="bk-map"><span>${label}</span><select class="inp" data-bkmap="${key}">${opts(F.map[key])}</select></label>`;
+  host.innerHTML = `<div class="bk-file"><div class="bk-file-h"><b>📄 ${esc(F.name)}</b><button type="button" class="link" data-action="bk-file-clear">Use pasted text instead</button></div>
+    ${F.sheets.length > 1 ? `<label class="bk-map"><span>Sheet</span><select class="inp" id="bk-sheet">${F.sheets.map((s, i) => `<option value="${i}" ${i === F.sheet ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>` : ""}
+    <details class="bk-cols"><summary>Columns: ${["title", "who", "date", "time", "priority", "notes"].filter(k => F.map[k] >= 0).map(k => esc(F.headers[F.map[k]])).join(", ") || "none found"} · <u>change</u></summary>
+    <p class="muted" style="margin:6px 0 8px;font-size:12.5px">Pick which column is which. Rows below update straight away.</p>
+    <div class="bk-maps">${f("title", "Task")}${f("who", "Add name from")}${f("date", "Due date")}${f("time", "Time")}${f("priority", "Priority")}${f("area", "Area")}${f("owner", "Assigned to")}${f("status", "Status")}${f("notes", "Notes")}</div>
+    <label class="bk-chk" style="margin-top:6px"><input type="checkbox" id="bk-hdr" ${F.headers.some(h => !/^Column [A-Z]+$/.test(h)) ? "checked" : ""}> First row is column names</label></details></div>`;
+}
 function bulkSheet(prefill = "") {
   U.bulk = { def: { date: nextWorkday(), time: "09:00" }, rows: [], allowUpdates: true };
   U.sheet = { type: "bulk" };
   openSheet(`<h2 id="sheet-title">Bulk add</h2>
-    <p class="muted" style="margin:-4px 0 12px;font-size:13.5px">Paste a list: one task per line (bullets and numbers are fine). Dates and times in a line are picked up. Lines without a date get the default reminder below, and you can change any row.</p>
-    <div class="field"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Prepare December payroll by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
+    <p class="muted" style="margin:-4px 0 12px;font-size:13.5px">Paste a list (one task per line) or import an Excel / CSV file. Dates and times are picked up; rows without a date get the default reminder below, and you can change any row before saving.</p>
+    <div class="bk-import"><label class="btn ghost" for="bk-file">📄 Import Excel / CSV file</label><input type="file" id="bk-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden><span class="muted">Read on your device, never uploaded</span></div>
+    <div id="bk-file-info"></div>
+    <div class="field" id="bk-text-f"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Prepare December payroll by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
     <div class="bk-def"><span class="lab">Default reminder for lines without a date</span>
       <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time">${remindSelect("bk-rem", 0, 'aria-label="Reminder for all"')}<button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
-      <label class="bk-chk"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label>
+      <label class="bk-chk" id="bk-upd-l"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label>
       <label class="bk-chk"><input type="checkbox" id="bk-spell" checked> Fix spelling mistakes (names are never changed)</label></div>
     <div id="bk-preview"></div>
     <div class="sheet-actions"><button class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" data-action="bk-save" id="bk-save" disabled>Add tasks</button></div>`, "tall wide");
@@ -1468,17 +1614,17 @@ function bulkSheet(prefill = "") {
 }
 function bulkRefresh(reparse) {
   if (!U.bulk) return;
-  if (reparse) U.bulk.rows = bulkParse($("#bk-text")?.value || "");
+  if (reparse) U.bulk.rows = U.bulk.file ? fileRows() : bulkParse($("#bk-text")?.value || "");
   const rows = U.bulk.rows, host = $("#bk-preview"); if (!host) return;
   const n = rows.filter(r => r.on && r.kind === "new").length, u = rows.filter(r => r.on && r.kind === "update").length;
-  host.innerHTML = rows.length ? `<div class="bk-head"><b>${rows.length} line${rows.length > 1 ? "s" : ""} found</b><span>${n} new${u ? ` · ${u} update${u > 1 ? "s" : ""}` : ""}</span></div>
+  host.innerHTML = rows.length ? `<div class="bk-head"><b>${rows.length} ${U.bulk.file ? "row" : "line"}${rows.length > 1 ? "s" : ""} found</b><span>${n} new${u ? ` · ${u} update${u > 1 ? "s" : ""}` : ""}</span></div>
     <div class="bk-list">${rows.map((r, i) => r.kind === "update" ? `
       <div class="bk-row upd ${r.on ? "" : "off"}"><label class="bk-on"><input type="checkbox" data-bk="on" data-i="${i}" ${r.on ? "checked" : ""} aria-label="Include"></label>
         <div class="bk-main"><span class="bk-tag">Update</span><b>${esc(r.task.title)}</b><small>${r.stage ? `→ ${esc(E.stagesOf(r.task).find(s => s.key === r.stage)?.name || "")} ` : ""}${r.note ? `· 💬 ${esc(r.note)}` : ""}</small></div>
         <div class="bk-when"><input class="inp" type="date" data-bk="due_date" data-i="${i}" value="${r.due_date || ""}" aria-label="Date"><input class="inp" type="time" data-bk="due_time" data-i="${i}" value="${r.due_time || ""}" aria-label="Time"></div></div>` : `
       <div class="bk-row ${r.on ? "" : "off"}"><label class="bk-on"><input type="checkbox" data-bk="on" data-i="${i}" ${r.on ? "checked" : ""} aria-label="Include"></label>
         <div class="bk-main"><input class="inp bk-title" data-bk="title" data-i="${i}" value="${esc(r.title)}" aria-label="Task title">
-          <div class="bk-meta"><select class="inp" data-bk="area" data-i="${i}" aria-label="Area">${AREAS.map(a => `<option ${r.area === a ? "selected" : ""}>${a}</option>`).join("")}</select><select class="inp" data-bk="priority" data-i="${i}" aria-label="Priority">${["High", "Medium", "Low"].map(p => `<option ${r.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select>${r.auto ? `<span class="bk-auto" title="Uses the default reminder">auto</span>` : ""}${spellNote(r.spell || [])}</div></div>
+          <div class="bk-meta"><select class="inp" data-bk="area" data-i="${i}" aria-label="Area">${AREAS.map(a => `<option ${r.area === a ? "selected" : ""}>${a}</option>`).join("")}</select><select class="inp" data-bk="priority" data-i="${i}" aria-label="Priority">${["High", "Medium", "Low"].map(p => `<option ${r.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select>${r.auto ? `<span class="bk-auto" title="Uses the default reminder">auto</span>` : ""}${r.flag ? `<span class="bk-auto warn">${esc(r.flag)}</span>` : ""}${r.notes ? `<span class="bk-note" title="${esc(r.notes)}">📝 ${esc(r.notes.split("\n")[0].slice(0, 40))}</span>` : ""}${spellNote(r.spell || [])}</div></div>
         <div class="bk-when"><input class="inp" type="date" data-bk="due_date" data-i="${i}" value="${r.due_date || ""}" aria-label="Date"><input class="inp" type="time" data-bk="due_time" data-i="${i}" value="${r.due_time || ""}" aria-label="Time"></div></div>`).join("")}</div>` : `<p class="muted" style="font-size:13px;margin:8px 2px">Your tasks will appear here as you paste or type.</p>`;
   const b = $("#bk-save"); if (b) { b.disabled = !(n + u); b.textContent = n + u ? `Add ${n ? `${n} task${n > 1 ? "s" : ""}` : ""}${n && u ? " & " : ""}${u ? `${u} update${u > 1 ? "s" : ""}` : ""}` : "Add tasks"; }
 }
@@ -1489,7 +1635,7 @@ async function bulkSave() {
   for (const r of rows) {
     try {
       if (r.kind === "update") { if (await E.statusUpdate(r.task, { note: r.note, due_date: r.due_date || null, due_time: r.due_time || null, stage: r.stage })) updated++; }
-      else { await E.createTask({ title: r.title.trim() || r.line, remind_before: parseInt($("#bk-rem")?.value ?? "0", 10), area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred, estimate_min: r.estimate_min || null }); added++; }
+      else { await E.createTask({ title: r.title.trim() || r.line, remind_before: parseInt($("#bk-rem")?.value ?? "0", 10), area: r.area, priority: r.priority, due_date: r.due_date || null, due_time: r.due_time || null, assignee_id: r.assignee_id || me(), repeat: r.repeat || "", starred: !!r.starred, estimate_min: r.estimate_min || null, ...(r.notes ? { notes: r.notes } : {}) }); added++; }
     } catch (e) { console.error(e); }
   }
   closeSheet(); U.bulk = null; buzz(20);
@@ -1691,6 +1837,7 @@ document.addEventListener("click", async e => {
   const a = e.target.closest("[data-action]"); if (!a) return;
   const id = a.dataset.id, act = a.dataset.action, t = id ? task(id) : null;
   if ((act.startsWith("fd-") || act.startsWith("free-")) && await fundAction(act, a, id)) return;
+  if (act.startsWith("cal-")) { await calendarAction(act, a); return; }
   switch (act) {
     case "add": chooser(); break;
     case "close-sheet": closeSheet(); break;
@@ -1774,6 +1921,8 @@ document.addEventListener("click", async e => {
     case "chat-del": { const m = S.db.chat_messages.find(x => x.id === id); if (m && m.author_id === me()) { if (U.confirmDel !== id) { U.confirmDel = id; toast("Tap ✕ again to delete this message."); setTimeout(() => { if (U.confirmDel === id) U.confirmDel = null; }, 3000); break; } U.confirmDel = null; await remove("chat_messages", m); } break; }
     case "bulk": bulkSheet(); setTimeout(() => $("#bk-text")?.focus(), 60); break;
     case "bk-save": await bulkSave(); break;
+    case "bulk-import": { closeSheet(); setTimeout(() => bulkSheet(), 10); break; }
+    case "bk-file-clear": { U.bulk.file = null; U.bulk.allowUpdates = !!$("#bk-upd")?.checked; const fi = $("#bk-file"); if (fi) fi.value = ""; bulkFilePanel(); bulkRefresh(true); break; }
     case "bk-def": { U.bulk.def = { date: nextWorkday(), time: "09:00" }; $("#bk-date").value = U.bulk.def.date; $("#bk-time").value = U.bulk.def.time; bulkRefresh(true); break; }
     case "backup-dl": case "backup-now": {
       a.disabled = true; const label = a.textContent; a.textContent = "Preparing…";
@@ -1811,6 +1960,12 @@ document.addEventListener("change", async e => {
   if (U.bulk && e.target.dataset?.bk === "on") { const r = U.bulk.rows[+e.target.dataset.i]; if (r) { r.on = e.target.checked; bulkRefresh(false); } return; }
   if (U.bulk && e.target.id === "bk-upd") { U.bulk.allowUpdates = e.target.checked; bulkRefresh(true); return; }
   if (U.bulk && e.target.id === "bk-spell") { U.bulk.fixSpell = e.target.checked; bulkRefresh(true); return; }
+  if (U.bulk && e.target.id === "bk-file") { const f = e.target.files?.[0]; if (f) bulkFile(f); return; }
+  if (U.bulk?.file && e.target.dataset?.bkmap) { U.bulk.file.map[e.target.dataset.bkmap] = +e.target.value; bulkRefresh(true); return; }
+  if (U.bulk?.file && e.target.id === "bk-sheet") { const F = U.bulk.file; F.sheet = +e.target.value; const g = guessHeader(F.sheets[F.sheet].rows); Object.assign(F, { headerRow: g.headerRow, headers: g.headers, map: guessMap(g.headers, F.sheets[F.sheet].rows.slice(g.headerRow + 1)) }); bulkFilePanel(); bulkRefresh(true); return; }
+  if (U.bulk?.file && e.target.id === "bk-hdr") { const F = U.bulk.file, rows = F.sheets[F.sheet].rows, first = rows.findIndex(r => r && r.some(Boolean)); const width = F.headers.length;
+    if (e.target.checked) { const g = guessHeader(rows); const hr = /^Column [A-Z]+$/.test(g.headers[0] || "") && g.headers.every(h => /^Column [A-Z]+$/.test(h)) ? first : g.headerRow; F.headerRow = hr; F.headers = [...Array(width)].map((_, k) => rows[hr]?.[k] ? cellText(rows[hr][k]) : `Column ${String.fromCharCode(65 + k)}`); } else { F.headerRow = first - 1; F.headers = [...Array(width)].map((_, k) => `Column ${String.fromCharCode(65 + k)}`); }
+    F.map = guessMap(F.headers, rows.slice(F.headerRow + 1)); bulkFilePanel(); bulkRefresh(true); return; }
   const el = e.target;
   if (el.dataset.tfield) { await saveTaskField(el); return; }
   if (el.id === "ft-task") { FT.taskId = el.value; render(); }
@@ -2043,10 +2198,55 @@ async function enablePush() {
     render();
   } catch (e) { console.error(e); toast(`Couldn't turn on popups: ${e.message || e}`); }
 }
+/* Outlook / Microsoft 365 calendar (one way: Outlook -> TaskerBay) */
+function calendarCard() {
+  if (!api.calendarStatus) return "";
+  if (U.cal === undefined) { U.cal = null; api.calendarStatus().then(x => { U.cal = x || false; render(); }, () => { U.cal = "na"; render(); }); }
+  if (U.cal === "na") return ""; // not available on this server yet
+  const c = U.cal, n = (S.db.calendar_events || []).length;
+  const ago = t => { if (!t) return "not yet"; const m = Math.round((Date.now() - new Date(t)) / 6e4); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+  const howTo = `<details class="cal-how" ${c ? "" : "open"}><summary>How to get your Outlook calendar link</summary><ol>
+      <li>On a computer, open <b>outlook.office.com</b> (Outlook on the web) and sign in with your work account.</li>
+      <li>Click ⚙ <b>Settings</b> → <b>Calendar</b> → <b>Shared calendars</b>.</li>
+      <li>Under <b>Publish a calendar</b>, pick <b>Calendar</b> and choose <b>Can view all details</b> (meeting titles) or <b>Can view when I'm busy</b> (times only, more private). Click <b>Publish</b>.</li>
+      <li>Click the <b>ICS</b> link, choose <b>Copy link</b>, and paste it below.</li></ol>
+      <p>If “Publish a calendar” isn't shown, your company has switched it off; ask IT to allow calendar publishing.</p></details>`;
+  const form = `<div class="field" style="margin-top:10px"><label for="cal-url">Outlook ICS link</label><input class="inp" id="cal-url" type="url" inputmode="url" autocomplete="off" placeholder="https://outlook.office365.com/owa/calendar/…/calendar.ics"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-action="cal-connect">Connect calendar</button>${c ? `<button class="btn ghost" data-action="cal-cancel">Cancel</button>` : ""}</div>`;
+  let body;
+  if (c === null) body = `<p class="muted" style="margin:0">Checking…</p>`;
+  else if (!c || U.calEdit) body = `<p class="muted" style="margin:0 0 6px;font-size:14px">Show your Outlook / Microsoft 365 meetings in TaskerBay: on Today, in the Planner timeline, and as busy time in Free time. <b>One way only</b>: TaskerBay never changes your Outlook calendar.</p>${howTo}${form}`;
+  else body = `<p style="margin:0 0 4px;font-size:14px">✅ Connected to <b>${esc(c.host || "Outlook")}</b></p>
+    <p class="muted" style="margin:0 0 10px;font-size:13.5px">${n} meeting${n === 1 ? "" : "s"} from last week to 2 months ahead · checked ${ago(c.last_synced_at)} · updates every 10 minutes</p>
+    ${c.last_error ? `<p class="flag" style="margin:0 0 10px">⚠️ Last check failed: ${esc(c.last_error)}</p>` : ""}
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-action="cal-sync">Sync now</button><button class="btn ghost" data-action="cal-edit">Change link</button><button class="btn ghost danger-t" data-action="cal-clear">Disconnect</button></div>
+    <p class="muted" style="font-size:12.5px;margin:10px 0 0">Only you can see these meetings. The link is stored privately on the server and never shown again. To stop sharing completely, also click <b>Unpublish</b> in Outlook.</p>`;
+  return `<div class="card"><div class="card-h"><h2>📅 Outlook calendar</h2>${c ? `<span class="chip ok">On</span>` : ""}</div>${body}</div>`;
+}
+async function calendarAction(act, a) {
+  switch (act) {
+    case "cal-connect": {
+      const url = ($("#cal-url")?.value || "").trim();
+      if (!url) { $("#cal-url")?.focus(); toast("Paste the ICS link from Outlook first."); return; }
+      a.disabled = true; a.textContent = "Connecting…";
+      try { await api.calendarSet(url); U.calEdit = false; const r = await api.calendarSync(); toast(`Connected. ${r?.n ?? (S.db.calendar_events || []).length} meetings loaded.`); }
+      catch (e) { toast(e.message || "Couldn't connect."); }
+      U.cal = undefined; render(); return;
+    }
+    case "cal-sync": { a.disabled = true; a.textContent = "Syncing…"; try { const r = await api.calendarSync(); toast(`Up to date. ${r?.n ?? 0} meetings.`); } catch (e) { toast(e.message); } U.cal = undefined; render(); return; }
+    case "cal-edit": U.calEdit = true; render(); return;
+    case "cal-cancel": U.calEdit = false; render(); return;
+    case "cal-clear": {
+      if (a.dataset.sure !== "1") { a.dataset.sure = "1"; a.textContent = "Tap again to disconnect"; return; }
+      try { await api.calendarClear(); toast("Outlook calendar disconnected. Meetings removed from TaskerBay."); } catch (e) { toast(e.message); }
+      U.cal = undefined; U.calEdit = false; render(); return;
+    }
+  }
+}
 function pushCard() {
   const st = pushState(); if (st === "na") return "";
   const body = {
-    on: `<p class="muted" style="margin:0 0 12px;font-size:14px">✅ On for this device. You'll get a <b>9 AM summary</b> (your local time), reminders <b>15 minutes before</b> tasks with a time, routine reminders, and team updates.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-action="push-test">Send a test popup</button><button class="btn ghost" data-action="push-off">Turn off on this device</button></div>`,
+    on: `<p class="muted" style="margin:0 0 12px;font-size:14px">✅ On for this device. You'll get a <b>9 AM summary</b> (your local time), a popup <b>at each task's time</b> (or earlier if you choose), routine reminders, and team updates.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-action="push-test">Send a test popup</button><button class="btn ghost" data-action="push-off">Turn off on this device</button></div>`,
     granted: `<p class="muted" style="margin:0 0 12px;font-size:14px">Popups are off on this device.</p><button class="btn" data-action="push-on">🔔 Turn on popups</button>`,
     default: `<p class="muted" style="margin:0 0 12px;font-size:14px">Get a <b>9 AM summary</b> of your day, reminders before tasks are due, and team updates, even when TaskerBay is closed. Turn it on once on each device you use.</p><button class="btn" data-action="push-on">🔔 Turn on popups</button>`,
     denied: `<p class="muted" style="margin:0;font-size:14px">Popups are blocked for this site. Open your browser's site settings for taskerbay.com, allow <b>Notifications</b>, then reload.</p>`,
