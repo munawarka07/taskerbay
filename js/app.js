@@ -2424,6 +2424,19 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) setT
 /* ================= Access approval ================= */
 const accessOk = acc => !!acc?.approved && (acc.is_admin || (!!acc.activated_at && (!acc.access_until || new Date(acc.access_until) > new Date())));
 const fmtWhen = t => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+// Opened from the activation email: wait for a real tap before using the one-time token (mail scanners open links but don't tap buttons)
+function activateLinkScreen(tok) {
+  $("#root").innerHTML = `<div class="auth"><div class="auth-card">
+    <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
+    <h1>Activate your account</h1><p class="lead">Your TaskerBay access is approved. Tap the button to continue, then choose your password.</p>
+    <button class="btn" id="act-go" style="width:100%">Activate my account</button><p class="muted" id="act-msg" style="margin:10px 0 0;font-size:13.5px"></p></div></div>`;
+  $("#act-go").onclick = async e => {
+    e.target.disabled = true; e.target.textContent = "Checking the link…";
+    try { await api.verifyActivation(tok); history.replaceState(null, "", location.pathname); location.reload(); }
+    catch (err) { history.replaceState(null, "", location.pathname); e.target.disabled = false; e.target.textContent = "Go to sign in"; e.target.onclick = () => location.reload();
+      $("#act-msg").textContent = "This activation link has expired or was already used. Sign in with your email and password, then tap “Send the activation email again”."; }
+  };
+}
 async function activationScreen(acc) {
   const via = await api.signInMethods?.().catch(() => []) || [];
   const fromLink = via.some(m => /otp|magiclink|recovery|invite|email/.test(m));
@@ -2495,6 +2508,8 @@ async function boot() {
   try {
     await initBackend();
     AI_ON = ENABLE_AI && (S.mode === "cloud" || (S.mode === "claude" && api.hasAI()));
+    const actTok = new URLSearchParams(location.search).get("activate");
+    if (actTok && S.mode === "cloud") { activateLinkScreen(actTok); return; }
     const user = await api.session();
     if (!user) { authScreen(); return; }
     S.user = user;

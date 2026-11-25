@@ -191,6 +191,7 @@ const cloud = {
     const r = await fetch(`${SUPABASE_URL}/functions/v1/mail`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY }, body: JSON.stringify({ action, target }) });
     const out = await r.json().catch(() => ({})); if (!r.ok || out.error) throw new Error(out.error || "Couldn't send the email."); return out;
   },
+  async verifyActivation(token_hash) { const c = await sbClient(); const { error } = await c.auth.verifyOtp({ token_hash, type: "magiclink" }); if (error) throw error; },
   async signInMethods() { // how this session was signed in: ["password"] or ["otp"] (email link)…
     const c = await sbClient(); const { data: { session } } = await c.auth.getSession(); if (!session) return [];
     try { const b = session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"); return (JSON.parse(atob(b)).amr || []).map(a => a.method); } catch (e) { return []; }

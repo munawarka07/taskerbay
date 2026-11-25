@@ -35,10 +35,11 @@ async function sendActivation(uid: string) {
   const { data: u } = await db.auth.admin.getUserById(uid);
   const email = u?.user?.email; if (!email) throw new Error("No email on this account.");
   const { data: link, error } = await db.auth.admin.generateLink({ type: "magiclink", email, options: { redirectTo: SITE } });
-  if (error || !link?.properties?.action_link) throw new Error(error?.message || "Couldn't create the activation link.");
+  if (error || !link?.properties?.hashed_token) throw new Error(error?.message || "Couldn't create the activation link.");
   const first = (p.full_name || "").split(" ")[0] || "there";
   const trial = p.access_until ? ` Your access is a trial until ${new Date(p.access_until).toLocaleString("en-GB", { timeZone: "Asia/Dubai", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} (Dubai time).` : "";
-  const href = link.properties.action_link;
+  // The link only opens a page with an "Activate" button, so email scanners that open links can't use it up.
+  const href = `${SITE}?activate=${encodeURIComponent(link.properties.hashed_token)}`;
   await send(email, "Activate your TaskerBay account",
     layout("Your TaskerBay access is approved ✅", `<p>Hi ${esc(first)},</p><p>Good news: your TaskerBay account has been approved.${esc(trial)}</p>
 <p>Click the button below, then enter your password to activate your account.</p>${button(href, "Activate my account")}
