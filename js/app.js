@@ -2271,7 +2271,14 @@ function openFromHash() {
     let wsId = q.ws;
     if (isTask && !wsId && !task(head.slice(5))) { try { wsId = await api.taskWorkspace?.(head.slice(5)); } catch (e) {} }
     if (wsId && wsId !== S.wsId && S.db.workspaces.some(w => w.id === wsId)) await switchWs(wsId);
-    if (isTask) { history.replaceState(null, "", "#" + U.view); const id = head.slice(5); if (task(id)) openTask(id); else toast("That task was deleted or you no longer have access to it."); }
+    if (isTask) {
+      history.replaceState(null, "", "#" + U.view); const id = head.slice(5), t = task(id);
+      if (!t) { toast("That task was deleted or you no longer have access to it."); return; }
+      // buttons on the system notification: "Done" and "Snooze"
+      if (q.do === "done") { if (!E.isDone(t)) await E.completeTask(t); markAlert(alertKey(t, "due")); toast(`Done: ${t.title}`); return; }
+      if (q.do === "snooze") { const m = lastSnooze(), d = new Date(Date.now() + m * 60e3); await E.changeTask(t, { due_date: dkey(d), due_time: `${pad(d.getHours())}:${pad(d.getMinutes())}` }); toast(`Snoozed ${snzLabel(m)}: ${t.title}`); return; }
+      openTask(id);
+    }
     else if (VIEWS[view]) go(view);
   })();
   return true;
