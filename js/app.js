@@ -1943,7 +1943,17 @@ document.addEventListener("click", async e => {
       setTimeout(() => { const i = $("#ae-mail"); i?.focus(); i?.select(); }, 50);
       break;
     }
-    case "acc-grant": { const x = (U.access || []).find(r => r.id === id), days = a.dataset.days ? +a.dataset.days : null; try { await api.setAccess(id, true, days); toast(days ? `${x?.full_name || "They"} can use TaskerBay for ${days} days.` : `${x?.full_name || "They"} now have permanent access.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
+    case "acc-grant": {
+      const x = (U.access || []).find(r => r.id === id), days = a.dataset.days ? +a.dataset.days : null; a.disabled = true;
+      try {
+        await api.setAccess(id, true, days);
+        let note = days ? `${x?.full_name || "They"} can use TaskerBay for ${days} days.` : `${x?.full_name || "They"} now have permanent access.`;
+        if (x && !x.activated_at && api.mail) { try { const r = await api.mail("activation", id); if (r.sent) note += ` Activation email sent to ${r.email}.`; } catch (e) { note += ` (Activation email failed: ${e.message})`; } }
+        toast(note);
+      } catch (e) { toast(e.message); }
+      U.access = null; render(); break;
+    }
+    case "acc-activate": { a.disabled = true; try { const r = await api.mail("activation", id); toast(r.sent ? `Activation email sent to ${r.email}.` : "They've already activated."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "push-test": { const r = await api.testPush().catch(e => ({ error: e.message })); toast(r?.sent ? `Test popup sent to ${r.sent} device${r.sent > 1 ? "s" : ""}.` : r?.error ? `Couldn't send: ${r.error}` : "No device is set up for popups yet."); break; }
@@ -2412,15 +2422,45 @@ setInterval(checkDueAlerts, 15e3);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(checkDueAlerts, 800); });
 
 /* ================= Access approval ================= */
-const accessOk = acc => !!acc?.approved && (acc.is_admin || !acc.access_until || new Date(acc.access_until) > new Date());
+const accessOk = acc => !!acc?.approved && (acc.is_admin || (!!acc.activated_at && (!acc.access_until || new Date(acc.access_until) > new Date())));
 const fmtWhen = t => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+async function activationScreen(acc) {
+  const via = await api.signInMethods?.().catch(() => []) || [];
+  const fromLink = via.some(m => /otp|magiclink|recovery|invite|email/.test(m));
+  const first = acc?.full_name ? ", " + esc(acc.full_name.split(" ")[0]) : "";
+  $("#root").innerHTML = `<div class="auth"><div class="auth-card">
+    <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
+    ${fromLink ? `<h1>Activate your account</h1>
+    <p class="lead">Welcome${first}! Your access is approved. Enter your password to activate your account (${esc(S.user.email || "")}).</p>
+    <form id="act-f"><div class="field"><label for="act-p">Password</label><input class="inp" id="act-p" type="password" minlength="8" required autocomplete="new-password" placeholder="At least 8 characters"></div>
+    <div class="field"><label for="act-p2">Type it again</label><input class="inp" id="act-p2" type="password" minlength="8" required autocomplete="new-password"></div>
+    <p class="muted" style="font-size:13px;margin:-2px 0 12px">You can use the same password you chose when you signed up.</p>
+    <button class="btn" type="submit" style="width:100%">Activate my account</button><p class="muted" id="act-msg" style="margin:10px 0 0;font-size:13.5px"></p></form>`
+    : `<h1>You're approved 🎉</h1>
+    <p class="lead">Thanks${first}. Your access has been approved. We've emailed an activation link to <b>${esc(S.user.email || "")}</b>. Open it, then enter your password to activate your account.</p>
+    <button class="btn" id="act-resend">Send the activation email again</button><p class="muted" id="act-msg" style="margin:10px 0 0;font-size:13.5px"></p>
+    <div class="alt">or</div><button class="btn ghost" onclick="location.reload()">I've activated, check again</button>`}
+    <div class="alt">or</div><button class="btn ghost" id="pend-out">Sign out</button></div></div>`;
+  $("#pend-out").onclick = () => api.signOut();
+  const msg = t => { const m = $("#act-msg"); if (m) m.textContent = t; };
+  if ($("#act-resend")) $("#act-resend").onclick = async e => { e.target.disabled = true; try { await api.mail("activation"); msg(`Sent. Check ${S.user.email} (and the spam folder).`); } catch (err) { msg(err.message); } setTimeout(() => { e.target.disabled = false; }, 60e3); };
+  if ($("#act-f")) $("#act-f").onsubmit = async e => {
+    e.preventDefault(); const p1 = $("#act-p").value, p2 = $("#act-p2").value;
+    if (p1.length < 8) return msg("Use at least 8 characters.");
+    if (p1 !== p2) return msg("The two passwords don't match.");
+    const b = e.target.querySelector("button"); b.disabled = true; b.textContent = "Activating…";
+    try { await api.activate(p1); msg("Activated! Opening TaskerBay…"); history.replaceState(null, "", location.pathname); setTimeout(() => location.reload(), 800); }
+    catch (err) { b.disabled = false; b.textContent = "Activate my account"; msg(err.message); }
+  };
+}
 function pendingScreen(acc) {
   const ended = acc?.approved && acc.access_until && new Date(acc.access_until) <= new Date();
+  if (acc?.approved && !acc.is_admin && !acc.activated_at && !ended) { activationScreen(acc); return; }
   $("#root").innerHTML = `<div class="auth"><div class="auth-card">
     <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
     ${ended ? `<h1>Your trial has ended</h1>
     <p class="lead">Your 1-week trial ended on ${esc(fmtWhen(acc.access_until))}. Your tasks are kept safe. Ask the owner to extend your access or make it permanent, then tap <b>Check again</b>.</p>` : `<h1>Waiting for approval</h1>
-    <p class="lead">Thanks${acc?.full_name ? ", " + esc(acc.full_name.split(" ")[0]) : ""}. Your account (${esc(S.user.email || "")}) has been created and the owner has been notified. You can use TaskerBay as soon as it's approved.</p>`}
+    <p class="lead">Thanks${acc?.full_name ? ", " + esc(acc.full_name.split(" ")[0]) : ""}. Your account (${esc(S.user.email || "")}) has been created and the owner has been notified. Once it's approved you'll get an <b>activation email</b>: open it and enter your password to start using TaskerBay.</p>`}
     <button class="btn" onclick="location.reload()">Check again</button>
     <div class="alt">or</div>
     <button class="btn ghost" id="pend-out">Sign out</button></div></div>`;
@@ -2432,8 +2472,8 @@ function accessCard() {
   const list = Array.isArray(U.access) ? U.access : [];
   const now = new Date(), expired = x => x.approved && !x.is_admin && x.access_until && new Date(x.access_until) <= now;
   const pend = list.filter(x => !x.approved), ended = list.filter(expired), ok = list.filter(x => x.approved && !expired(x));
-  const trialRow = (x, isEnded) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${isEnded ? `<span class="flag">trial ended ${esc(fmtWhen(x.access_until))}</span>` : x.access_until ? `trial until ${esc(fmtWhen(x.access_until))}` : x.is_admin ? "admin" : "permanent"}</small></div>
-    <div class="acc-btns"><button class="btn ghost" data-action="acc-email" data-id="${x.id}">Change email</button>${x.is_admin ? "" : `${x.access_until ? `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">${isEnded ? "Give 1 more week" : "+1 week"}</button><button class="btn ghost" data-action="acc-grant" data-id="${x.id}">Make permanent</button>` : `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">Change to 1-week trial</button>`}<button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div></div>`;
+  const trialRow = (x, isEnded) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${isEnded ? `<span class="flag">trial ended ${esc(fmtWhen(x.access_until))}</span>` : x.access_until ? `trial until ${esc(fmtWhen(x.access_until))}` : x.is_admin ? "admin" : "permanent"}${!x.is_admin && !x.activated_at ? ` · <span class="flag" style="color:var(--orange)!important">not activated yet${x.activation_sent_at ? ", link sent " + esc(timeAgo(x.activation_sent_at)) : ""}</span>` : ""}</small></div>
+    <div class="acc-btns">${!x.is_admin && !x.activated_at && !isEnded ? `<button class="btn ghost" data-action="acc-activate" data-id="${x.id}">Resend activation email</button>` : ""}<button class="btn ghost" data-action="acc-email" data-id="${x.id}">Change email</button>${x.is_admin ? "" : `${x.access_until ? `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">${isEnded ? "Give 1 more week" : "+1 week"}</button><button class="btn ghost" data-action="acc-grant" data-id="${x.id}">Make permanent</button>` : `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">Change to 1-week trial</button>`}<button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div></div>`;
   const row = (x, pending) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${pending ? "asked " + timeAgo(x.created_at) : x.is_admin ? "admin" : "approved"}</small></div><div class="acc-btns"><button class="btn" data-action="acc-grant" data-id="${x.id}">Permanent</button><button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">1-week trial</button><button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Reject</button></div></div>`;
   return `<div class="card"><div class="card-h"><h2>👤 Access requests</h2>${pend.length ? `<span class="badge-n">${pend.length}</span>` : ""}</div>
     ${U.access === "loading" ? `<p class="muted" style="margin:0">Loading…</p>` : U.access?.error ? `<p class="muted" style="margin:0">${esc(U.access.error)}</p>` : `

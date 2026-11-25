@@ -182,9 +182,25 @@ const cloud = {
   async refresh() { const ws = S.wsId; await this.loadAll(); if (ws && S.db.workspaces.some(w => w.id === ws)) await this.loadWorkspace(ws); emit(); },
   async savePush(sub) { const c = await sbClient(); const { error } = await c.from("push_subscriptions").upsert({ ...sub, user_id: S.user.id }, { onConflict: "endpoint" }); if (error) throw error; },
   async removePush(endpoint) { const c = await sbClient(); await c.from("push_subscriptions").delete().eq("endpoint", endpoint); },
-  async myAccess() { const c = await sbClient(); const { data, error } = await c.from("profiles").select("approved, is_admin, full_name, access_until").eq("id", S.user.id).maybeSingle(); if (error) throw error; return data || { approved: false, is_admin: false }; },
+  async myAccess() { const c = await sbClient(); const { data, error } = await c.from("profiles").select("approved, is_admin, full_name, access_until, activated_at").eq("id", S.user.id).maybeSingle(); if (error) throw error; return data || { approved: false, is_admin: false }; },
   async accessRequests() { return this.rpc("access_requests"); },
   async setAccess(target, allow, days = null) { return this.rpc("set_access", { target, allow, days }); },
+  // account activation by email link (after the admin approves) and the one-time welcome email
+  async mail(action, target) {
+    const c = await sbClient(); const { data: { session } } = await c.auth.getSession();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/mail`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY }, body: JSON.stringify({ action, target }) });
+    const out = await r.json().catch(() => ({})); if (!r.ok || out.error) throw new Error(out.error || "Couldn't send the email."); return out;
+  },
+  async signInMethods() { // how this session was signed in: ["password"] or ["otp"] (email link)…
+    const c = await sbClient(); const { data: { session } } = await c.auth.getSession(); if (!session) return [];
+    try { const b = session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"); return (JSON.parse(atob(b)).amr || []).map(a => a.method); } catch (e) { return []; }
+  },
+  async activate(password) {
+    const c = await sbClient();
+    const { error } = await c.auth.updateUser({ password }); if (error) throw new Error(error.message);
+    const { error: e2 } = await c.rpc("activate_account"); if (e2) throw new Error(e2.message);
+    try { await this.mail("welcome"); } catch (e) {}
+  },
   async setEmail(target, email) { return this.rpc("admin_set_email", { target, new_email: email }); },
   async testPush() { const c = await sbClient(); const { data, error } = await c.functions.invoke("push", { body: { test: true } }); if (error) throw error; return data; }
 };

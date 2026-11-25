@@ -754,3 +754,11 @@ select cron.schedule('taskerbay-trials', '*/10 * * * *', 'select private.trial_c
 -- v12: admin can change a person's sign-in email (Settings -> Access requests -> Change email)
 -- public.admin_set_email(target uuid, new_email text): admin only; validates format and uniqueness;
 -- updates auth.users.email, the email identity, profiles.email, and tells the person in their Inbox.
+
+-- v13: activation by email after approval, then a one-time welcome email
+alter table public.profiles add column if not exists activated_at timestamptz;
+alter table public.profiles add column if not exists welcome_sent_at timestamptz;
+alter table public.profiles add column if not exists activation_sent_at timestamptz;
+-- is_approved() now also requires activated_at (admins exempt); public.activate_account() sets it only when the
+-- session came from the emailed link (JWT amr = otp/magiclink); access_requests() returns activated_at/activation_sent_at.
+-- Emails are sent by the "mail" edge function through Resend (secret RESEND_API_KEY).
