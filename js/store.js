@@ -7,11 +7,11 @@ export const PK = {
   routine_items: ["id"], routine_logs: ["item_id", "day"], journal: ["user_id", "day"], focus_sessions: ["id"],
   expenses: ["id"], budgets: ["user_id", "category"],
   chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"],
-  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"]
+  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"], task_templates: ["id"]
 };
 const TABLES = Object.keys(PK);
 const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages"];
-const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads", "calendar_events"];
+const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads", "calendar_events", "task_templates"];
 // shared money funds: visible to the creator and the people added to them (the server decides who sees what)
 const FUND_TABLES = ["fund_projects", "fund_members", "fund_entries"];
 
@@ -91,6 +91,7 @@ const cloud = {
       q("notifications", x => x.eq("user_id", uid).order("created_at", { ascending: false }).limit(150)),
       q("chat_reads", x => x.eq("user_id", uid)),
       q("calendar_events", x => x.eq("user_id", uid).order("start_at").limit(3000)).catch(() => { S.db.calendar_events = []; }),
+      q("task_templates", x => x.eq("user_id", uid).order("created_at")).catch(() => { S.db.task_templates = []; }),
       q("fund_projects", x => x.order("created_at", { ascending: false })),
       q("fund_members", x => x.order("created_at")),
       q("fund_entries", x => x.order("date", { ascending: false }).limit(5000))
@@ -191,6 +192,21 @@ const cloud = {
     const r = await fetch(`${SUPABASE_URL}/functions/v1/mail`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY }, body: JSON.stringify({ action, target }) });
     const out = await r.json().catch(() => ({})); if (!r.ok || out.error) throw new Error(out.error || "Couldn't send the email."); return out;
   },
+  // ---- 2-step sign-in (authenticator app codes) ----
+  async mfaState() {
+    const c = await sbClient();
+    const [{ data: aal }, { data: f }] = await Promise.all([c.auth.mfa.getAuthenticatorAssuranceLevel(), c.auth.mfa.listFactors()]);
+    const totp = (f?.all || []).filter(x => x.factor_type === "totp");
+    return { current: aal?.currentLevel, next: aal?.nextLevel, factor: totp.find(x => x.status === "verified") || null, pending: totp.filter(x => x.status !== "verified") };
+  },
+  async mfaEnroll() {
+    const c = await sbClient(); const st = await this.mfaState();
+    for (const p of st.pending) await c.auth.mfa.unenroll({ factorId: p.id });
+    const { data, error } = await c.auth.mfa.enroll({ factorType: "totp", friendlyName: "TaskerBay " + new Date().toISOString().slice(0, 10) });
+    if (error) throw error; return { id: data.id, qr: data.totp.qr_code, secret: data.totp.secret };
+  },
+  async mfaVerify(factorId, code) { const c = await sbClient(); const { error } = await c.auth.mfa.challengeAndVerify({ factorId, code: String(code).replace(/\s/g, "") }); if (error) throw new Error(/invalid|expired/i.test(error.message) ? "That code didn't match. Check the time on your phone and try the newest code." : error.message); },
+  async mfaOff(factorId) { const c = await sbClient(); const { error } = await c.auth.mfa.unenroll({ factorId }); if (error) throw error; await c.auth.refreshSession(); },
   async verifyActivation(token_hash) { const c = await sbClient(); const { error } = await c.auth.verifyOtp({ token_hash, type: "magiclink" }); if (error) throw error; },
   async signInMethods() { // how this session was signed in: ["password"] or ["otp"] (email link)…
     const c = await sbClient(); const { data: { session } } = await c.auth.getSession(); if (!session) return [];

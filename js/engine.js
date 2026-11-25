@@ -141,28 +141,94 @@ export async function reopenTask(task) { return changeTask(task, { stage: firstS
 
 export async function deleteTask(task) { return remove("tasks", task); }
 
+// ---- repeat rules: "daily", "weekdays", "weekly", "monthly", "yearly", "every:2w", "weekly:1,4", "monthly:25", "monthly:last", "monthly:lastwd", "monthly:firstwd"
+export const isWorkday = d => d.getDay() !== 0 && d.getDay() !== 6; // UAE working week: Mon–Fri
+const dim = (y, m) => new Date(y, m + 1, 0).getDate();
+const DOWS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const ord = n => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+function inMonth(y, m, rule) { // the rule's day in that month
+  const last = dim(y, m);
+  if (rule === "last") return new Date(y, m, last);
+  if (rule === "lastwd") { let d = new Date(y, m, last); while (!isWorkday(d)) d = addDays(d, -1); return d; }
+  if (rule === "firstwd") { let d = new Date(y, m, 1); while (!isWorkday(d)) d = addDays(d, 1); return d; }
+  return new Date(y, m, Math.min(+rule, last));
+}
+function addMonths(d, n) { const day = d.getDate(), x = new Date(d.getFullYear(), d.getMonth() + n, 1); x.setDate(Math.min(day, dim(x.getFullYear(), x.getMonth()))); return x; }
+// first date matching the rule strictly after d (or on/after d when inclusive)
+export function nextRepeat(rule, d, inclusive = false) {
+  d = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const [kind, arg] = String(rule || "").split(":");
+  if (kind === "monthly" && arg) { for (let k = 0; k < 14; k++) { const x = inMonth(d.getFullYear(), d.getMonth() + k, arg); if (inclusive ? x >= d : x > d) return x; } }
+  if (kind === "weekly" && arg) { const set = arg.split(",").map(Number); for (let k = inclusive ? 0 : 1; k < 8; k++) { const x = addDays(d, k); if (set.includes(x.getDay())) return x; } }
+  if (inclusive) return d;
+  if (kind === "every") { const n = parseInt(arg, 10) || 1, u = arg.slice(-1); return u === "d" ? addDays(d, n) : u === "w" ? addDays(d, 7 * n) : addMonths(d, n); }
+  if (rule === "daily") return addDays(d, 1);
+  if (rule === "weekdays") { let x = addDays(d, 1); while (!isWorkday(x)) x = addDays(x, 1); return x; }
+  if (rule === "weekly") return addDays(d, 7);
+  if (rule === "monthly") return addMonths(d, 1);
+  if (rule === "yearly") return addMonths(d, 12);
+  return addDays(d, 1);
+}
+export function repeatLabel(r) {
+  if (!r) return "";
+  const [kind, arg] = r.split(":");
+  if (kind === "every") { const n = parseInt(arg, 10), u = { d: "day", w: "week", m: "month" }[arg.slice(-1)]; return n === 2 ? `every other ${u}` : `every ${n} ${u}s`; }
+  if (kind === "weekly" && arg) return "every " + arg.split(",").map(x => DOWS[+x]).join(", ");
+  if (kind === "monthly" && arg) return arg === "last" ? "last day of each month" : arg === "lastwd" ? "last working day of each month" : arg === "firstwd" ? "first working day of each month" : `monthly on the ${ord(+arg)}`;
+  return { daily: "every day", weekdays: "weekdays", weekly: "every week", monthly: "every month", yearly: "every year" }[r] || r;
+}
+// pull a repeat phrase out of a sentence: "pay rent every month on 25th" -> { rule: "monthly:25", rest: "pay rent" }
+const DOWN = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 };
+export function extractRepeat(text) {
+  const t = String(text);
+  const tries = [
+    [/\b(?:on\s+)?(?:the\s+)?last\s+(?:working|business|work)\s+day\s+(?:of\s+)?(?:every|each|the)\s+month\b|\b(?:every|each)\s+(?:month\s+)?(?:on\s+)?(?:the\s+)?last\s+(?:working|business|work)\s+day(?:\s+of\s+(?:the\s+)?month)?\b/i, () => "monthly:lastwd"],
+    [/\b(?:on\s+)?(?:the\s+)?first\s+(?:working|business|work)\s+day\s+(?:of\s+)?(?:every|each|the)\s+month\b|\b(?:every|each)\s+(?:month\s+)?(?:on\s+)?(?:the\s+)?first\s+(?:working|business|work)\s+day(?:\s+of\s+(?:the\s+)?month)?\b/i, () => "monthly:firstwd"],
+    [/\b(?:on\s+)?(?:the\s+)?(?:last\s+day|end)\s+of\s+(?:every|each|the)\s+month\b|\b(?:every|each)\s+month[\s-]?end\b|\bmonthly\s+on\s+(?:the\s+)?last\s+day\b/i, () => "monthly:last"],
+    [/\b(?:every|each)\s+month\s+on\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b|\bmonthly\s+on\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b|\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(?:every|each)\s+month\b|\b(?:every|each)\s+(\d{1,2})(?:st|nd|rd|th)\b(?:\s+of\s+the\s+month)?/i, m => { const n = +(m[1] || m[2] || m[3] || m[4]); return n >= 1 && n <= 31 ? `monthly:${n}` : null; }],
+    [/\b(?:every|each)\s+other\s+(day|week|month)\b/i, m => `every:2${m[1][0].toLowerCase()}`],
+    [/\b(?:every|each)\s+(\d{1,2})\s+(day|week|month)s?\b/i, m => +m[1] === 1 ? { d: "daily", w: "weekly", m: "monthly" }[m[2][0].toLowerCase()] : `every:${+m[1]}${m[2][0].toLowerCase()}`],
+    [/\b(?:every|each)\s+((?:sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)[a-z]*(?:\s*(?:,|and|&|\/)\s*(?:sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)[a-z]*)*)\b/i, m => { const ds = [...new Set(m[1].toLowerCase().split(/\s*(?:,|and|&|\/)\s*/).map(x => DOWN[x]).filter(x => x != null))].sort(); return ds.length ? (ds.join() === "1,2,3,4,5" ? "weekdays" : `weekly:${ds.join(",")}`) : null; }],
+    [/\b(?:every|each)\s+(?:working|business|work)\s+day\b|\bon\s+weekdays\b/i, () => "weekdays"],
+    [/\b(?:every|each)\s+year\b|\b(?:repeat\s+)?(?:yearly|annually)\s*$/i, () => "yearly"],
+    // bare "monthly" / "weekly" only at the end ("check stock monthly"), so "weekly report" stays a title
+    [/\b(?:repeat\s+)?monthly\s*$/i, () => "monthly"], [/\b(?:repeat\s+)?weekly\s*$/i, () => "weekly"],
+  ];
+  for (const [re, fn] of tries) { const m = t.match(re); if (!m) continue; const rule = fn(m); if (!rule) continue; return { rule, rest: (t.slice(0, m.index) + " " + t.slice(m.index + m[0].length)).replace(/\s{2,}/g, " ").trim() }; }
+  return null;
+}
 function nextDate(t) {
   const base = t.due_date ? parseKey(t.due_date) : new Date();
   const today = parseKey(dkey());
   let d = base < today ? today : base;
-  if (t.repeat === "daily") d = addDays(d, 1);
-  else if (t.repeat === "weekdays") { do { d = addDays(d, 1); } while (d.getDay() === 0 || d.getDay() === 6); } // UAE working week: Mon–Fri
-  else if (t.repeat === "weekly") d = addDays(d, 7);
-  else if (t.repeat === "monthly") { d = new Date(d); d.setMonth(d.getMonth() + 1); }
-  return dkey(d);
+  // a rule tied to a day (25th, last working day, Mon & Thu) catches up to the next real occurrence
+  if (base < today && /:/.test(t.repeat) && !/^every:/.test(t.repeat)) return dkey(nextRepeat(t.repeat, addDays(today, -1)));
+  return dkey(nextRepeat(t.repeat, d));
 }
 async function spawnNext(t) {
   const wf = workflowOf(t);
   const copy = await createTask({ title: t.title, notes: t.notes, area: t.area, priority: t.priority, due_date: nextDate(t), due_time: t.due_time, repeat: t.repeat, workflow_id: t.workflow_id, stage: firstStage(wf), assignee_id: t.assignee_id, parent_id: t.parent_id, estimate_min: t.estimate_min }, 2);
   // copy the step structure, reset
+  const shift = t.due_date && copy.due_date ? Math.round((parseKey(copy.due_date) - parseKey(t.due_date)) / 864e5) : 0;
   const cloneKids = async (fromId, toId) => {
     for (const k of childrenOf(fromId)) {
-      const n = await createTask({ title: k.title, notes: k.notes, area: k.area, priority: k.priority, workflow_id: k.workflow_id, stage: firstStage(workflowOf(k)), assignee_id: k.assignee_id, parent_id: toId, position: k.position }, 3);
+      // steps with dates move by the same amount as the main task (kept off weekends)
+      let due = null;
+      if (k.due_date && shift) {
+        const kd = parseKey(k.due_date), od = parseKey(t.due_date), nd = parseKey(copy.due_date);
+        if (isWorkday(kd) && isWorkday(od)) { // keep the same number of working days before / after the main date
+          let n = 0, x = new Date(od); const dir = kd < od ? -1 : 1;
+          while (dkey(x) !== dkey(kd) && Math.abs(n) < 400) { x = addDays(x, dir); if (isWorkday(x)) n += dir; }
+          let y = new Date(nd), left = Math.abs(n); while (left > 0) { y = addDays(y, dir); if (isWorkday(y)) left--; }
+          due = dkey(y);
+        } else { let d = addDays(kd, shift); while (!isWorkday(d)) d = addDays(d, -1); due = dkey(d); }
+      }
+      const n = await createTask({ title: k.title, notes: k.notes, area: k.area, priority: k.priority, workflow_id: k.workflow_id, stage: firstStage(workflowOf(k)), assignee_id: k.assignee_id, parent_id: toId, position: k.position, due_date: due, due_time: due ? k.due_time : null }, 3);
       await cloneKids(k.id, n.id);
     }
   };
   await cloneKids(t.id, copy.id);
-  await postUpdate(copy, `Repeats ${t.repeat}. Created from the previous one.`, "system");
+  await postUpdate(copy, `Repeats ${repeatLabel(t.repeat)}. Created from the previous one.`, "system");
   return copy;
 }
 async function checkParent(parentId, depth) {

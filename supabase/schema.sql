@@ -762,3 +762,10 @@ alter table public.profiles add column if not exists activation_sent_at timestam
 -- is_approved() now also requires activated_at (admins exempt); public.activate_account() sets it only when the
 -- session came from the emailed link (JWT amr = otp/magiclink); access_requests() returns activated_at/activation_sent_at.
 -- Emails are sent by the "mail" edge function through Resend (secret RESEND_API_KEY).
+
+-- v14 (Nov 2026): Outlook calendar feed live (see calendar.sql), cron taskerbay-calendar every 10 min.
+-- v15: morning email digest: profiles.email_digest ('off'|'weekdays'|'daily'), email_digest_hour, email_digest_sent_on;
+--      cron taskerbay-digest every 15 min -> mail function {action:"digest-run"} with x-cron-secret. mail function verify_jwt=false (checks the user itself).
+-- v16: tasks.repeat accepts rules: yearly, every:Nd|Nw|Nm, weekly:0-6 list, monthly:1-31|last|lastwd|firstwd.
+-- v17: public.task_templates (user_id, name, data jsonb) for saved templates; built-in ones live in js/templates.js.
+-- v18: is_approved() requires aal2 for people with a verified TOTP factor; public.admin_mfa_reset(target).

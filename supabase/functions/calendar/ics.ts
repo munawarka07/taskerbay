@@ -3,6 +3,7 @@
 // recurring meetings (DAILY / WEEKLY / MONTHLY / YEARLY with INTERVAL, COUNT, UNTIL, BYDAY, BYMONTHDAY, BYMONTH, BYSETPOS),
 // EXDATE, moved or cancelled single occurrences (RECURRENCE-ID), cancelled meetings and free/busy status.
 // Plain JavaScript inside a .ts file so it runs in Deno (edge function) and Node (tests) alike.
+// @ts-nocheck
 
 const WIN = {
   "Arabian Standard Time": "Asia/Dubai", "Arab Standard Time": "Asia/Riyadh", "Arabic Standard Time": "Asia/Baghdad",

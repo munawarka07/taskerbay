@@ -2,6 +2,8 @@
 //  { action: "activation", target }  admin only: email an approved person their one-time activation link
 //  { action: "activation" }          the person themself: send their activation link again
 //  { action: "welcome" }             the person themself, right after activating: the welcome email (once)
+//  { action: "digest" }              the person themself: send today's digest now (test)
+//  { action: "digest-run" } + x-cron-secret   every 15 min: morning digests that are due
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -73,9 +75,69 @@ async function sendWelcome(uid: string) {
   return { sent: true };
 }
 
+// ---------- Daily email digest ----------
+const localNow = (tz: string) => {
+  const o = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", weekday: "short" }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { date: `${o.year}-${o.month}-${o.day}`, hour: +o.hour % 24, dow: o.weekday };
+};
+const fmtD = (d: string) => new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short" });
+const fmtT = (t: string | null) => { if (!t) return ""; const [h, m] = t.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
+
+async function sendDigest(uid: string, force = false) {
+  const { data: p } = await db.from("profiles").select("full_name, timezone, email_digest, email_digest_hour, email_digest_sent_on").eq("id", uid).maybeSingle();
+  if (!p) return { skipped: "no profile" };
+  const { date: today } = localNow(p.timezone || "Asia/Dubai");
+  const soon = new Date(Date.parse(today + "T00:00:00Z") + 6 * 864e5).toISOString().slice(0, 10);
+  const { data: rows } = await db.from("tasks").select("title, due_date, due_time, priority, assignee_id, created_by, workspace_id")
+    .is("completed_at", null).is("parent_id", null).not("due_date", "is", null).lte("due_date", soon)
+    .or(`assignee_id.eq.${uid},and(assignee_id.is.null,created_by.eq.${uid})`).order("due_date").order("due_time", { nullsFirst: false }).limit(200);
+  const all: any[] = rows || [];
+  const overdue = all.filter(t => t.due_date < today), todays = all.filter(t => t.due_date === today), next = all.filter(t => t.due_date > today).slice(0, 8);
+  const { data: owned } = await db.from("fund_projects").select("id, name").eq("owner_id", uid);
+  let waiting = 0;
+  if (owned?.length) { const { count } = await db.from("fund_entries").select("id", { count: "exact", head: true }).eq("status", "pending").in("project_id", owned.map((f: any) => f.id)); waiting = count || 0; }
+  const { count: unread } = await db.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", uid).eq("read", false);
+  if (!force && !overdue.length && !todays.length && !waiting) { await db.from("profiles").update({ email_digest_sent_on: today }).eq("id", uid); return { skipped: "nothing due" }; }
+  const { data: u } = await db.auth.admin.getUserById(uid); const email = u?.user?.email; if (!email) return { skipped: "no email" };
+  const first = (p.full_name || "").split(" ")[0] || "there";
+  const pr = (t: any) => t.priority === "high" ? ` <span style="color:#c0392b;font-weight:bold">!</span>` : "";
+  const li = (t: any, showDate: boolean) => `<li style="margin:4px 0">${esc(t.title)}${pr(t)} <span style="color:#5f6b76">${showDate ? fmtD(t.due_date) + " " : ""}${fmtT(t.due_time)}</span></li>`;
+  const sec = (title: string, list: any[], showDate: boolean, color: string) => list.length ? `<h3 style="font-size:15px;margin:18px 0 6px;color:${color}">${title} (${list.length})</h3><ul style="padding-left:20px;margin:0">${list.slice(0, 15).map(t => li(t, showDate)).join("")}</ul>${list.length > 15 ? `<p style="color:#5f6b76;font-size:13px">…and ${list.length - 15} more</p>` : ""}` : "";
+  const txt = (title: string, list: any[], showDate: boolean) => list.length ? `\n${title} (${list.length}):\n` + list.slice(0, 15).map(t => `- ${t.title}${t.priority === "high" ? " !" : ""} ${showDate ? fmtD(t.due_date) + " " : ""}${fmtT(t.due_time)}`).join("\n") + "\n" : "";
+  const extra = [waiting ? `💰 ${waiting} fund entr${waiting === 1 ? "y is" : "ies are"} waiting for your approval.` : "", unread ? `🔔 ${unread} unread update${unread === 1 ? "" : "s"} in your inbox.` : ""].filter(Boolean);
+  const subj = `Your day: ${todays.length} due today${overdue.length ? `, ${overdue.length} overdue` : ""}`;
+  await send(email, subj,
+    layout(`Good morning, ${esc(first)} ☀️`, `<p style="color:#5f6b76;margin-top:0">${fmtD(today)}</p>
+${todays.length || overdue.length ? "" : "<p>Nothing is due today. A good day to get ahead.</p>"}
+${sec("Overdue", overdue, true, "#c0392b")}${sec("Due today", todays, false, "#0e7a74")}${sec("Coming up this week", next, true, "#1b1f24")}
+${extra.length ? `<p style="margin-top:18px">${extra.join("<br>")}</p>` : ""}${button(SITE + "#today", "Open TaskerBay")}
+<p style="font-size:12px;color:#5f6b76">You get this because the daily email is on in TaskerBay Settings. You can turn it off there.</p>`),
+    `Good morning ${first},\n${fmtD(today)}\n${txt("Overdue", overdue, true)}${txt("Due today", todays, false)}${txt("Coming up this week", next, true)}\n${extra.join("\n")}\n\nOpen TaskerBay: ${SITE}\n\nTurn this email off in TaskerBay Settings.`);
+  await db.from("profiles").update({ email_digest_sent_on: today }).eq("id", uid);
+  return { sent: true, email };
+}
+async function runDigests() {
+  const { data: people } = await db.from("profiles").select("id, timezone, email_digest, email_digest_hour, email_digest_sent_on, approved, activated_at, is_admin, access_until").neq("email_digest", "off").eq("approved", true);
+  let sent = 0;
+  for (const p of (people || []) as any[]) {
+    if (!p.is_admin && (!p.activated_at || (p.access_until && new Date(p.access_until) <= new Date()))) continue;
+    const n = localNow(p.timezone || "Asia/Dubai");
+    if (p.email_digest_sent_on === n.date || n.hour < p.email_digest_hour || n.hour > p.email_digest_hour + 3) continue;
+    if (p.email_digest === "weekdays" && (n.dow === "Sat" || n.dow === "Sun")) continue;
+    try { const r: any = await sendDigest(p.id); if (r.sent) sent++; } catch (e) { console.error("digest", p.id, (e as Error).message); }
+  }
+  return { sent };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   try {
+    const body0 = await req.clone().json().catch(() => ({}));
+    if (body0.action === "digest-run") {
+      const { data: cfg } = await db.rpc("push_config");
+      if (!cfg || req.headers.get("x-cron-secret") !== cfg.cron) return json({ error: "forbidden" }, 403);
+      return json(await runDigests());
+    }
     const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     const { data: u } = await db.auth.getUser(token);
     if (!u?.user) return json({ error: "Please sign in again." }, 401);
@@ -88,6 +150,7 @@ Deno.serve(async (req) => {
       }
       return json(await sendActivation(u.user.id));
     }
+    if (body.action === "digest") return json(await sendDigest(u.user.id, true));
     if (body.action === "welcome") return json(await sendWelcome(u.user.id));
     return json({ error: "Unknown action" }, 400);
   } catch (e) { return json({ error: (e as Error).message }, 400); }

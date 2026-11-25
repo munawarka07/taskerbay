@@ -2,6 +2,7 @@
 import { S, api, initBackend, onChange, onError, emit, insert, upsert, update, remove, uuid, localUpsert } from "./store.js";
 import * as E from "./engine.js";
 import * as SP from "./spell.js";
+import * as TP from "./templates.js";
 import { ENABLE_GOOGLE, ENABLE_AI, CURRENCY, VAPID_PUBLIC_KEY } from "./config.js";
 
 const { dkey, parseKey, addDays } = E;
@@ -80,8 +81,9 @@ const FILLER = new Set(["on", "at", "by", "due", "for", "to", "until", "till", "
 const MONTH_N = { jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11 };
 const monthIdx = w => MONTH_N[w] ?? -1;
 function dateFromDM(dd, mm, today) { if (dd < 1 || dd > 31 || mm < 0 || mm > 11) return null; let d = new Date(today.getFullYear(), mm, dd); if (d < parseKey(dkey(today))) d = new Date(today.getFullYear() + 1, mm, dd); return dkey(d); }
-function parseQuick(text) {
-  const out = { title: "", area: S.db.workspace_members.length > 1 ? "Work" : "Personal", priority: "Medium", due_date: null, due_time: null, starred: false, repeat: "", assignee_id: me() };
+function parseQuick(text0) {
+  const rr = E.extractRepeat(text0), text = rr && rr.rest ? rr.rest : text0;
+  const out = { title: "", area: S.db.workspace_members.length > 1 ? "Work" : "Personal", priority: "Medium", due_date: null, due_time: null, starred: false, repeat: rr?.rule || "", assignee_id: me() };
   const words = text.trim().split(/\s+/).filter(Boolean); const used = new Set(); const today = new Date();
   // "remind me at 10.45 pm regarding payroll", "reminder: ...", "set a reminder ..." -> pop up exactly at that time
   if (/^\s*(please\s+|pls\s+|kindly\s+)?(remind(er)?s?\b|set\s+(a\s+)?reminder|alert\s+me)/i.test(text)) out.remind_before = 0;
@@ -165,6 +167,8 @@ function parseQuick(text) {
   }
   // a time with no day that has already passed today ("at 9" said at 11 pm) means tomorrow
   if (autoDay && out.due_date === dkey(today) && out.due_time) { const [h, m] = out.due_time.split(":").map(Number); if (h * 60 + m <= today.getHours() * 60 + today.getMinutes()) out.due_date = dkey(addDays(today, 1)); }
+  // a repeat tied to a day with no date given: start on its next occurrence ("rent every month on 25th")
+  if (out.repeat && (!out.due_date || autoDay) && /^(monthly:|weekly:|weekdays)/.test(out.repeat)) { const d0 = E.nextRepeat(out.repeat, today, true); if (autoDay && dkey(d0) === dkey(today) && out.due_time) { const [h, m] = out.due_time.split(":").map(Number); if (h * 60 + m <= today.getHours() * 60 + today.getMinutes()) { out.due_date = dkey(E.nextRepeat(out.repeat, today)); } else out.due_date = dkey(d0); } else out.due_date = dkey(d0); autoDay = false; }
   // drop little linking words that only introduced a date or time ("on", "at", "by"...)
   const keep = words.filter((w, i) => { if (used.has(i)) return false; if (FILLER.has(lws[i])) { let j = i + 1; while (j < words.length && FILLER.has(lws[j]) && !used.has(j)) j++; if (j >= words.length || used.has(j)) return false; } return true; });
   // tidy the title: drop "remind me ... regarding", "about", leftover "priority", and similar wrappers
@@ -406,7 +410,7 @@ function render(animate = false) {
 }
 function go(view, opts = {}) {
   if (!VIEWS[view]) view = "today";
-  if (view === "settings") { U.access = null; U.cal = undefined; } // always show fresh access requests and calendar status
+  if (view === "settings") { U.access = null; U.cal = undefined; U.mfa = undefined; } // always show fresh access requests and calendar status
   U.view = view; Object.assign(U, opts);
   if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   render(true); scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
@@ -436,7 +440,7 @@ function taskRow(t, opts = {}) {
   if (!done) chips.push(stageChip(t));
   if (pg) chips.push(`<span class="chip subbar">${pg.done}/${pg.total}<span><i style="width:${pg.pct * 100}%"></i></span></span>`);
   chips.push(`<span class="chip dot" style="--c:${AREA_C[t.area] || "var(--muted)"}">${esc(t.area)}</span>`);
-  if (t.repeat) chips.push(`<span class="chip">${I.repeat} ${esc(t.repeat)}</span>`);
+  if (t.repeat) chips.push(`<span class="chip">${I.repeat} ${esc(E.repeatLabel(t.repeat))}</span>`);
   { const cu = chatUnread(t.id); if (cu) chips.push(`<span class="chip chat-chip">💬 ${cu}</span>`); }
   if (t.parent_id && opts.showParent) { const p = task(t.parent_id); if (p) chips.push(`<span class="chip">↳ ${esc(p.title).slice(0, 24)}</span>`); }
   return `<div class="row ${done ? "done" : ""}" style="--p:${PRI_C[t.priority]}" data-id="${t.id}" data-swipe="1">
@@ -447,7 +451,7 @@ function taskRow(t, opts = {}) {
   </div>`;
 }
 function quickAdd(id, placeholder) {
-  return `<form class="qa" data-form="quick" autocomplete="off"><label for="${id}" class="sr">New task</label><input id="${id}" data-quick="1" placeholder="${placeholder}" enterkeyhint="done"><button class="btn" type="submit">${I.plus}<span>Add</span></button><button class="btn ghost qa-bulk" type="button" data-action="bulk" title="Paste a list of tasks">☰<span>Bulk</span></button></form>
+  return `<form class="qa" data-form="quick" autocomplete="off"><label for="${id}" class="sr">New task</label><input id="${id}" data-quick="1" placeholder="${placeholder}" enterkeyhint="done">${SPEECH ? `<button class="qa-mic" type="button" data-action="voice" data-for="${id}" title="Say the task" aria-label="Say the task">🎤</button>` : ""}<button class="btn" type="submit">${I.plus}<span>Add</span></button><button class="btn ghost qa-bulk" type="button" data-action="bulk" title="Paste a list of tasks">☰<span>Bulk</span></button></form>
   <div class="qa-hint" data-hint-for="${id}">${hintFor("")}</div>`;
 }
 function hintFor(raw) {
@@ -456,14 +460,14 @@ function hintFor(raw) {
   return hintCore(v, raw) + keepBtn;
 }
 function hintCore(v, raw) {
-  if (!v.trim()) return `<span>Shortcuts:</span><code>today</code><code>fri</code><code>3pm</code><code>#work</code><code>!high</code>${isTeam() ? "<code>@name</code>" : ""}<code>*</code><code>every week</code><span>· or update one:</span><code>payroll done</code><code>move visa to thu 3pm</code>`;
+  if (!v.trim()) return `<span>Shortcuts:</span><code>today</code><code>fri</code><code>3pm</code><code>#work</code><code>!high</code>${isTeam() ? "<code>@name</code>" : ""}<code>*</code><code>every month on 25th</code><span>· or update one:</span><code>payroll done</code><code>move visa to thu 3pm</code>`;
   const it = parseIntent(v);
   if (it) {
     const st = it.stage ? E.stagesOf(it.task).find(s => s.key === it.stage) : null, fake = { ...it.task, due_date: it.due_date ?? it.task.due_date, due_time: it.due_time ?? it.task.due_time };
     return `<span>Will update:</span><span class="chip upd-chip">${esc(it.task.title.slice(0, 40))}</span>${st ? `<span class="chip" style="color:${st.color}">→ ${esc(st.name)}</span>` : ""}${it.due_date || it.due_time ? `<span class="chip ${E.dueStatus({ ...fake, stage: "todo" })}">${esc(dueLabel(fake))}</span>` : ""}${it.note ? `<span class="chip">💬 ${esc(it.note.slice(0, 40))}</span>` : ""}<span class="muted" style="font-size:11.5px">Start with <b>+</b> to add as a new task instead</span>`;
   }
   const p = parseQuick(v.replace(/^\+\s*/, "")), fake = { ...p, stage: "todo" };
-  return `<span>Will add:</span>${p.due_date ? `<span class="chip ${E.dueStatus(fake)}">${esc(dueLabel(fake))}</span>` : `<span class="chip">No date</span>`}<span class="chip dot" style="--c:${AREA_C[p.area]}">${p.area}</span><span class="chip" style="color:${PRI_C[p.priority]}">${p.priority}</span>${p.assignee_id !== me() ? `<span class="chip">→ ${esc(nameOf(p.assignee_id))}</span>` : ""}${p.starred ? `<span class="chip today">⭐</span>` : ""}${p.repeat ? `<span class="chip">${I.repeat} ${p.repeat}</span>` : ""}`;
+  return `<span>Will add:</span>${p.due_date ? `<span class="chip ${E.dueStatus(fake)}">${esc(dueLabel(fake))}</span>` : `<span class="chip">No date</span>`}<span class="chip dot" style="--c:${AREA_C[p.area]}">${p.area}</span><span class="chip" style="color:${PRI_C[p.priority]}">${p.priority}</span>${p.assignee_id !== me() ? `<span class="chip">→ ${esc(nameOf(p.assignee_id))}</span>` : ""}${p.starred ? `<span class="chip today">⭐</span>` : ""}${p.repeat ? `<span class="chip">${I.repeat} ${esc(E.repeatLabel(p.repeat))}</span>` : ""}`;
 }
 function ring(pct, size = 118, stroke = 11, id = "") {
   const r = (size - stroke) / 2 - 4, C = 2 * Math.PI * r;
@@ -727,7 +731,7 @@ function refreshTaskSheet(first) {
       <div class="field"><label for="tf-pri">Priority</label><select class="inp" id="tf-pri" data-tfield="priority">${["High", "Medium", "Low"].map(p => `<option ${t.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select></div>
       <div class="field"><label for="tf-area">Area</label><select class="inp" id="tf-area" data-tfield="area">${AREAS.map(a => `<option ${t.area === a ? "selected" : ""}>${a}</option>`).join("")}</select></div>
       <div class="field"><label for="tf-wf">Workflow</label><select class="inp" id="tf-wf" data-tfield="workflow_id">${E.workflows().map(w => `<option value="${w.id}" ${w.id === wf?.id ? "selected" : ""}>${esc(w.icon)} ${esc(w.name)}</option>`).join("")}</select></div>
-      <div class="field"><label for="tf-rep">Repeat</label><select class="inp" id="tf-rep" data-tfield="repeat">${[["", "Never"], ["daily", "Every day"], ["weekdays", "Weekdays (Mon–Fri)"], ["weekly", "Every week"], ["monthly", "Every month"]].map(([v, l]) => `<option value="${v}" ${t.repeat === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div class="field"><label for="tf-rep">Repeat</label><select class="inp" id="tf-rep" data-tfield="repeat">${(() => { const base = [["", "Never"], ["daily", "Every day"], ["weekdays", "Weekdays (Mon–Fri)"], ["weekly", "Every week"], ["every:2w", "Every other week"], ["monthly", "Every month"], ["monthly:lastwd", "Last working day of the month"], ["monthly:firstwd", "First working day of the month"], ["monthly:last", "Last day of the month"], ["yearly", "Every year"]]; if (t.due_date) { const d = parseKey(t.due_date); base.splice(6, 0, [`monthly:${d.getDate()}`, `Monthly on the ${E.repeatLabel("monthly:" + d.getDate()).replace("monthly on the ", "")}`], [`weekly:${d.getDay()}`, `Every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()]}`]); } if (t.repeat && !base.some(b => b[0] === t.repeat)) base.push([t.repeat, E.repeatLabel(t.repeat)]); return base.filter((b, i, a) => a.findIndex(x => x[0] === b[0]) === i).map(([v, l]) => `<option value="${v}" ${t.repeat === v ? "selected" : ""}>${esc(l[0].toUpperCase() + l.slice(1))}</option>`).join(""); })()}</select></div>
       ${members.length > 1 ? `<div class="field"><label for="tf-as">Assigned to</label><select class="inp" id="tf-as" data-tfield="assignee_id"><option value="">Nobody</option>${members.map(u => `<option value="${u}" ${t.assignee_id === u ? "selected" : ""}>${esc(nameOf(u))}${u === me() ? " (me)" : ""}</option>`).join("")}</select></div>` : ""}
       <div class="field"><label for="tf-est">Takes (minutes)</label><input class="inp" type="number" min="0" step="5" id="tf-est" data-tfield="estimate_min" value="${t.estimate_min ?? ""}" inputmode="numeric"></div>
     </div>
@@ -757,7 +761,7 @@ function refreshTaskSheet(first) {
       </div>
     </div>
     ${isTeam() ? `<div class="card" style="padding:14px;box-shadow:none;margin-top:12px"><div class="card-h" style="margin-bottom:6px"><h2>💬 Chat</h2><span class="sub">${S.db.workspace_members.length} people in ${esc(ws()?.name || "this workspace")}</span></div>${chatPanel(t.id, "chat-in-task")}</div>` : ""}
-    <div class="sheet-actions" style="margin-top:14px"><button class="btn danger" data-action="delete-task" data-id="${t.id}">Delete</button>${!E.isDone(t) ? `<button class="btn ghost" data-action="focus-task" data-id="${t.id}">⏱ Focus</button>` : ""}<button class="btn" data-action="close-sheet">Done</button></div>
+    <div class="sheet-actions" style="margin-top:14px"><button class="btn danger" data-action="delete-task" data-id="${t.id}">Delete</button>${!E.isDone(t) ? `<button class="btn ghost" data-action="focus-task" data-id="${t.id}">⏱ Focus</button>` : ""}${E.childrenOf(t.id).length ? `<button class="btn ghost" data-action="tpl-save" data-id="${t.id}">📋 Save as template</button>` : ""}<button class="btn" data-action="close-sheet">Done</button></div>
     <p class="muted" style="font-size:11.5px;text-align:center;margin:10px 0 0">Created ${timeAgo(t.created_at)} by ${esc(nameOf(t.created_by))}${t.completed_at ? ` · finished ${timeAgo(t.completed_at)}` : ""}</p>`;
   Object.entries(keep).forEach(([id, v]) => { const n = $("#" + id); if (n && v !== undefined && document.activeElement !== n) n.value = v; });
   Object.entries(sub).forEach(([id, v]) => { const n = $(`[data-sub-input="${id}"]`); if (n) n.value = v; });
@@ -1426,6 +1430,8 @@ function vSettings() {
       <form data-form="profile"><div class="field"><label for="pf-name">Your name</label><input class="inp" id="pf-name" value="${esc(p.full_name || "")}"></div><button class="btn" type="submit">Save</button></form></div>
     ${accessCard()}
     ${calendarCard()}
+    ${digestCard()}
+    ${mfaCard()}
     ${pushCard()}
     ${backupCard()}
     <div class="card"><div class="card-h"><h2>Appearance</h2></div><div class="seg">${THEMES.map(t => `<button class="${theme === t ? "on" : ""}" data-action="set-theme" data-v="${t}">${t === "auto" ? "Auto" : t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div></div>
@@ -1446,7 +1452,8 @@ function chooser() {
   <button data-action="new-expense"><span class="ic g">${I.money}</span><b>Expense</b><small>Money in or out</small></button>
   <button data-action="routine-new"><span class="ic">${I.routine}</span><b>Routine item</b><small>A daily habit</small></button>
   <button data-action="auto-new"><span class="ic g">${I.bolt}</span><b>Automation</b><small>A rule that runs itself</small></button>
-  <button data-action="bulk-import"><span class="ic">📄</span><b>From Excel / list</b><small>Import a file or paste many</small></button></div>
+  <button data-action="bulk-import"><span class="ic">📄</span><b>From Excel / list</b><small>Import a file or paste many</small></button>
+  <button data-action="tpl-open"><span class="ic g">📋</span><b>From a template</b><small>Payroll, onboarding, exit, visa…</small></button></div>
   ${AI_ON ? `<button class="ai-btn" data-action="capture" style="width:100%;justify-content:center;padding:14px;margin-top:4px"><span class="spark">✨</span>Just say it, Claude sorts it out</button>` : ""}`);
 }
 /* ================= Bulk add: paste many lines, each becomes a task ================= */
@@ -1838,6 +1845,13 @@ document.addEventListener("click", async e => {
   const id = a.dataset.id, act = a.dataset.action, t = id ? task(id) : null;
   if ((act.startsWith("fd-") || act.startsWith("free-")) && await fundAction(act, a, id)) return;
   if (act.startsWith("cal-")) { await calendarAction(act, a); return; }
+  if (act.startsWith("dg-")) { await digestAction(act, a); return; }
+  if (act === "voice") { voiceStart(a); return; }
+  if (act.startsWith("mfa-")) { await mfaAction(act, a); return; }
+  if (act === "tpl-open") { closeSheet(); setTimeout(() => templateSheet(), 10); return; }
+  if (act === "tpl-pick") { templateSheet(a.dataset.k); return; }
+  if (act === "tpl-save") { await tplSave(a.dataset.id); return; }
+  if (act === "tpl-del") { const r = (S.db.task_templates || []).find(x => x.id === a.dataset.id); if (r) { await remove("task_templates", r); toast("Template deleted."); templateSheet(); } return; }
   switch (act) {
     case "add": chooser(); break;
     case "close-sheet": closeSheet(); break;
@@ -1933,6 +1947,7 @@ document.addEventListener("click", async e => {
     case "old-done": { a.disabled = true; a.textContent = "Loading…"; try { const n = await api.loadOldDone(S.wsId); U.oldDone = S.wsId; toast(n ? `Loaded ${n} older finished task${n > 1 ? "s" : ""}.` : "No older finished tasks."); } catch (e) { toast(e.message); } render(); break; }
     case "keep-spell": { const inp = a.closest(".qa-hint")?.previousElementSibling?.querySelector?.("input") || $("[data-quick]"); const v = inp?.value || ""; const sp = SP.fix(v); SP.learn(sp.changes.map(c => c.from)); U.keepSpell = v; const h = $(`[data-hint-for="${inp?.id}"]`); if (h) h.innerHTML = hintFor(v); toast("OK, I'll keep your spelling for those words from now on."); break; }
     case "push-on": await enablePush(); break;
+    case "acc-mfa": { a.disabled = true; try { await api.rpc("admin_mfa_reset", { target: a.dataset.id }); toast("Done. They can sign in with just their password and set up 2-step again."); } catch (e) { toast(e.message); } a.disabled = false; break; }
     case "acc-email": {
       const x = (U.access || []).find(r => r.id === id); if (!x) break;
       U.sheet = { type: "acc-email" };
@@ -1978,6 +1993,8 @@ document.addEventListener("click", async e => {
 function reopenAuto() { const s = U.sheet; autoSheet(s.a, s.isNew); }
 
 document.addEventListener("change", async e => {
+  if (e.target.id === "tp-date") { tplPreview(); return; }
+  if (e.target.id === "dg-hour") { const h = +e.target.value, pr = profile(me()); try { await api.updateProfile({ email_digest_hour: h }); if (pr) localUpsert("profiles", { ...pr, email_digest_hour: h }); toast("Saved."); } catch (err) { toast(err.message); } return; }
   if (U.bulk && e.target.dataset?.bk === "on") { const r = U.bulk.rows[+e.target.dataset.i]; if (r) { r.on = e.target.checked; bulkRefresh(false); } return; }
   if (U.bulk && e.target.id === "bk-upd") { U.bulk.allowUpdates = e.target.checked; bulkRefresh(true); return; }
   if (U.bulk && e.target.id === "bk-spell") { U.bulk.fixSpell = e.target.checked; bulkRefresh(true); return; }
@@ -2037,6 +2054,8 @@ document.addEventListener("keydown", async e => {
 document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind?.startsWith("fd-")) { await fundSubmit(kind, f, e); return; }
+  if (kind === "tpl") { await tplCreate(f); return; }
+  if (kind === "mfa-verify") { const b = f.querySelector("[type=submit]"); b.disabled = true; try { await api.mfaVerify(U.mfaEnroll.id, $("#mfa-new").value); U.mfaEnroll = null; U.mfa = undefined; toast("2-step sign-in is on. You'll need a code next time you sign in."); render(); } catch (err) { b.disabled = false; toast(err.message); } return; }
   if (kind === "acc-email") {
     const mail = $("#ae-mail").value.trim(), btn = f.querySelector("[type=submit]"); btn.disabled = true;
     try { await api.setEmail(f.dataset.id, mail); closeSheet(); toast(`Email changed to ${mail.toLowerCase()}. They'll sign in with it from now on.`); U.access = null; render(); }
@@ -2185,6 +2204,22 @@ let deferredInstall = null;
 addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; });
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+
+/* ================= Voice add ================= */
+const SPEECH = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+let REC = null;
+function voiceStart(btn) {
+  const inp = $("#" + btn.dataset.for); if (!inp || !SPEECH) return;
+  if (REC) { REC.stop(); return; }
+  const r = new SPEECH(); REC = r;
+  r.lang = navigator.language?.startsWith("en") ? navigator.language : "en-GB"; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+  const before = inp.value ? inp.value.trim() + " " : "";
+  const ph = inp.placeholder; btn.classList.add("on"); btn.textContent = "⏺"; inp.placeholder = "Listening… say the task, day and time";
+  r.onresult = e => { let txt = ""; for (const x of e.results) txt += x[0].transcript; inp.value = before + txt.trim(); inp.dispatchEvent(new Event("input", { bubbles: true })); };
+  r.onerror = e => { if (e.error === "not-allowed" || e.error === "service-not-allowed") toast("Allow the microphone for taskerbay.com to use voice."); else if (e.error !== "no-speech" && e.error !== "aborted") toast("Couldn't hear that. Try again."); };
+  r.onend = () => { REC = null; btn.classList.remove("on"); btn.textContent = "🎤"; inp.placeholder = ph; inp.focus(); };
+  try { r.start(); } catch (e) { REC = null; btn.classList.remove("on"); btn.textContent = "🎤"; }
+}
 
 // Pasting several lines into a quick-add box opens Bulk add with them
 document.addEventListener("paste", e => {
@@ -2421,6 +2456,121 @@ function showDueAlert(t, kind) {
 setInterval(checkDueAlerts, 15e3);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(checkDueAlerts, 800); });
 
+/* ================= Templates ================= */
+const allTemplates = () => [...TP.BUILT_IN, ...(S.db.task_templates || []).map(r => ({ ...r.data, id: r.id, key: "u:" + r.id, name: r.name, mine: true }))];
+function templateSheet(key) {
+  const list = allTemplates();
+  U.sheet = { type: "tpl" };
+  if (!key) {
+    openSheet(`<h2 id="sheet-title">Start from a template</h2><p class="muted" style="margin:-4px 0 12px;font-size:14px">Creates the main task and every step with its own date. Change anything afterwards.</p>
+    <div class="tpl-list">${list.map(t => `<button class="tpl-card" data-action="tpl-pick" data-k="${esc(t.key)}"><span class="ic">${esc(t.icon || "📋")}</span><span><b>${esc(t.name)}</b><small>${esc(t.blurb || `${t.steps.length} steps`)}</small></span><em>${t.steps.length} steps</em></button>`).join("")}</div>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 0">Tip: open any task with steps and tap <b>📋 Save as template</b> to add your own here.</p>`, "wide");
+    return;
+  }
+  const t = list.find(x => x.key === key); if (!t) return;
+  const members = S.db.workspace_members.map(m => m.user_id);
+  let anchor = TP.defaultAnchor(t); if (t.rule && TP.planSteps(t, anchor).some(x => x.due < dkey())) anchor = dkey(E.nextRepeat(t.rule, parseKey(anchor))); // this cycle already started: plan the next one
+  const needsName = /\{name\}/.test(t.title || "");
+  const who = (id, sel) => `<select class="inp" id="${id}">${(members.length ? members : [me()]).map(u => `<option value="${u}" ${u === sel ? "selected" : ""}>${esc(nameOf(u))}${u === me() ? " (me)" : ""}</option>`).join("")}</select>`;
+  openSheet(`<h2 id="sheet-title">${esc(t.icon || "📋")} ${esc(t.name)}</h2>
+  <form data-form="tpl" data-k="${esc(t.key)}" autocomplete="off">
+    ${needsName ? `<div class="field"><label for="tp-name">Employee name</label><input class="inp" id="tp-name" required placeholder="e.g. Ahmed Ali"></div>` : ""}
+    <div class="grid g-2" style="gap:10px"><div class="field"><label for="tp-date">${esc(t.anchor || "Due date")}</label><input class="inp" type="date" id="tp-date" value="${anchor}" required></div>
+    ${members.length > 1 ? `<div class="field"><label for="tp-who">Steps assigned to</label>${who("tp-who", me())}</div>` : ""}</div>
+    ${members.length > 1 && t.steps.some(s => s[2] === "approval") ? `<div class="field"><label for="tp-appr">Approval by</label>${who("tp-appr", me())}</div>` : ""}
+    ${t.repeat ? `<label class="tog" style="margin:4px 0 10px"><input type="checkbox" id="tp-rep" checked> Repeat ${esc(E.repeatLabel(t.rule))}. The next cycle and all its steps are created when this one is done.</label>` : ""}
+    <div class="tpl-prev" id="tp-prev"></div>
+    <div class="sheet-actions">${t.mine ? `<button type="button" class="btn danger" data-action="tpl-del" data-id="${t.id}">Delete template</button>` : `<button type="button" class="btn ghost" data-action="tpl-open">Back</button>`}<button class="btn" type="submit">Create ${t.steps.length + 1} tasks</button></div>
+  </form>`, "wide");
+  tplPreview();
+}
+function tplPreview() {
+  const f = $('[data-form="tpl"]'), box = $("#tp-prev"); if (!f || !box) return;
+  const t = allTemplates().find(x => x.key === f.dataset.k), a = $("#tp-date").value; if (!t || !a) return;
+  const today = dkey();
+  const plan = TP.planSteps(t, a), at = plan.filter(s => s.offset <= 0).length;
+  const dl = k => parseKey(k).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  const row = s => `<div class="tp-row ${s.due < today ? "past" : ""}"><span class="tp-d">${dl(s.due)}</span><span>${s.approval ? "✅ " : ""}${esc(s.title)}</span></div>`;
+  box.innerHTML = `<div class="tp-h">Plan</div>` + plan.slice(0, at).map(row).join("") + `<div class="tp-row key"><span class="tp-d">${dl(a)}</span><b>${esc(t.anchor || "Due")}</b></div>` + plan.slice(at).map(row).join("");
+  if (TP.planSteps(t, a).some(s => s.due < today)) box.insertAdjacentHTML("beforeend", `<p class="muted" style="font-size:12.5px;margin:8px 0 0">Steps in grey are already in the past. They'll show as overdue.</p>`);
+}
+async function tplCreate(f) {
+  const t = allTemplates().find(x => x.key === f.dataset.k); if (!t) return;
+  const a = $("#tp-date").value, name = $("#tp-name")?.value.trim() || "";
+  if (!a) return toast("Pick the date first.");
+  const owner = $("#tp-who")?.value || me(), appr = $("#tp-appr")?.value || owner;
+  const wfs = E.workflows(), payWf = t.key === "payroll" ? wfs.find(w => w.name === "Payroll cycle") : null, apprWf = wfs.find(w => w.name === "Approval");
+  const btn = f.querySelector('button[type="submit"]'); btn.disabled = true; btn.textContent = "Creating…";
+  try {
+    const parent = await E.createTask({ title: TP.fillTitle(t, a, name) || t.name, due_date: a, priority: t.priority || "Medium", area: "Work", assignee_id: owner, repeat: t.repeat && $("#tp-rep")?.checked ? t.rule : "", ...(payWf ? { workflow_id: payWf.id, stage: E.firstStage(payWf) } : {}) });
+    let pos = Date.now();
+    for (const s of TP.planSteps(t, a)) await E.createTask({ parent_id: parent.id, title: s.title, due_date: s.due, area: "Work", priority: s.approval ? "High" : "Medium", assignee_id: s.approval ? appr : owner, position: pos++, ...(s.approval && apprWf ? { workflow_id: apprWf.id, stage: E.firstStage(apprWf) } : {}) });
+    closeSheet(); toast(`Created “${parent.title}” with ${t.steps.length} steps.`); setTimeout(() => openTask(parent.id), 250);
+  } catch (e) { btn.disabled = false; btn.textContent = "Create"; toast(e.message); }
+}
+async function tplSave(id) {
+  const t = task(id); if (!t) return;
+  const data = TP.fromTask(t, E.childrenOf(t.id));
+  const row = { id: uuid(), user_id: me(), name: (t.title || "My template").slice(0, 200), data, created_at: new Date().toISOString() };
+  try { await insert("task_templates", row); toast(`Saved “${row.name}” as a template.`); } catch (e) { toast(e.message); }
+}
+
+/* ================= 2-step sign-in ================= */
+function mfaScreen(factor) {
+  $("#root").innerHTML = `<div class="auth"><div class="auth-card">
+    <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
+    <h1>Enter your code</h1><p class="lead">Open your authenticator app and type the 6-digit code for TaskerBay.</p>
+    <form id="mfa-f"><div class="field"><label for="mfa-c">6-digit code</label><input class="inp" id="mfa-c" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus style="letter-spacing:.3em;font-size:20px;text-align:center"></div>
+    <button class="btn" type="submit" style="width:100%">Continue</button><p class="muted" id="mfa-msg" style="margin:10px 0 0;font-size:13.5px"></p></form>
+    <div class="alt">or</div><button class="btn ghost" id="mfa-out">Sign out</button>
+    <p class="muted" style="font-size:12.5px;margin-top:14px">Lost your phone? Ask the TaskerBay admin to switch 2-step sign-in off for your account.</p></div></div>`;
+  $("#mfa-out").onclick = () => api.signOut();
+  $("#mfa-c").focus();
+  $("#mfa-f").onsubmit = async e => {
+    e.preventDefault(); const b = e.target.querySelector("button"); b.disabled = true;
+    try { await api.mfaVerify(factor.id, $("#mfa-c").value); location.reload(); }
+    catch (err) { b.disabled = false; $("#mfa-msg").textContent = err.message; $("#mfa-c").select(); }
+  };
+}
+function mfaCard() {
+  if (S.mode !== "cloud") return "";
+  if (U.mfa === undefined) { U.mfa = null; api.mfaState().then(x => { U.mfa = x; render(); }, () => { U.mfa = { err: true }; render(); }); }
+  const m = U.mfa, en = U.mfaEnroll;
+  let body;
+  if (!m) body = `<p class="muted" style="margin:0">Checking…</p>`;
+  else if (m.err) body = `<p class="muted" style="margin:0">2-step sign-in isn't available right now.</p>`;
+  else if (m.factor) body = `<p style="margin:0 0 10px;font-size:14px"><span class="chip ok">On</span> Signing in needs your password <b>and</b> a code from your authenticator app.</p><button class="btn ghost danger-t" data-action="mfa-off">Turn off 2-step sign-in</button>`;
+  else if (en) body = `<ol class="muted" style="margin:0 0 10px;padding-left:18px;font-size:14px;display:grid;gap:4px"><li>Open an authenticator app (Microsoft Authenticator, Google Authenticator…).</li><li>Scan this code, or type the key below.</li><li>Enter the 6-digit code it shows.</li></ol>
+    <div class="mfa-qr"><img alt="QR code for your authenticator app" src="${en.qr.startsWith("data:") ? en.qr : "data:image/svg+xml;utf8," + encodeURIComponent(en.qr)}"></div>
+    <p style="font-size:12.5px;text-align:center;margin:6px 0 12px;word-break:break-all"><span class="muted">Key:</span> <code>${esc(en.secret)}</code></p>
+    <form data-form="mfa-verify"><div class="field"><label for="mfa-new">6-digit code</label><input class="inp" id="mfa-new" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required style="letter-spacing:.3em;text-align:center"></div>
+    <div class="sheet-actions" style="margin:0"><button type="button" class="btn ghost" data-action="mfa-cancel">Cancel</button><button class="btn" type="submit">Turn on</button></div></form>`;
+  else body = `<p class="muted" style="margin:0 0 10px;font-size:14px">Add a second lock: after your password, TaskerBay asks for a 6-digit code from an app on your phone. Strongly recommended for the admin account.</p><button class="btn" data-action="mfa-on">Set up 2-step sign-in</button>`;
+  return `<div class="card"><div class="card-h"><h2>🔐 2-step sign-in</h2></div>${body}</div>`;
+}
+async function mfaAction(act, a) {
+  if (act === "mfa-on") { a.disabled = true; try { U.mfaEnroll = await api.mfaEnroll(); } catch (e) { toast(e.message); } render(); return; }
+  if (act === "mfa-cancel") { U.mfaEnroll = null; U.mfa = undefined; render(); return; }
+  if (act === "mfa-off") { if (!U.mfa?.factor) return; a.disabled = true; try { await api.mfaOff(U.mfa.factor.id); toast("2-step sign-in is off."); } catch (e) { toast(e.message); } U.mfa = undefined; render(); }
+}
+
+/* ================= Morning email ================= */
+function digestCard() {
+  if (S.mode !== "cloud") return "";
+  const p = profile(me()) || {}, mode = p.email_digest || "off", hr = p.email_digest_hour ?? 7;
+  const hl = h => `${h % 12 || 12}:00 ${h < 12 ? "AM" : "PM"}`;
+  return `<div class="card"><div class="card-h"><h2>☀️ Morning email</h2></div>
+    <p class="muted" style="margin:0 0 10px;font-size:14px">A short email each morning with what's due today, what's overdue, the week ahead and anything waiting for your approval. Days with nothing due are skipped.</p>
+    <div class="seg" role="group" aria-label="Morning email">${[["off", "Off"], ["weekdays", "Mon–Fri"], ["daily", "Every day"]].map(([v, l]) => `<button class="${mode === v ? "on" : ""}" data-action="dg-mode" data-v="${v}">${l}</button>`).join("")}</div>
+    ${mode !== "off" ? `<div class="field" style="margin-top:12px"><label for="dg-hour">Send at</label><select class="inp" id="dg-hour">${[5, 6, 7, 8, 9, 10].map(h => `<option value="${h}" ${h === hr ? "selected" : ""}>${hl(h)}</option>`).join("")}</select></div>` : ""}
+    <button class="btn ghost" data-action="dg-test" style="margin-top:12px">Send me today's email now</button></div>`;
+}
+async function digestAction(act, a) {
+  const pr = profile(me());
+  if (act === "dg-mode") { const v = a.dataset.v; try { await api.updateProfile({ email_digest: v }); if (pr) localUpsert("profiles", { ...pr, email_digest: v }); toast(v === "off" ? "Morning email turned off." : "Morning email is on."); } catch (e) { toast(e.message); } render(); return; }
+  if (act === "dg-test") { a.disabled = true; a.textContent = "Sending…"; try { const r = await api.mail("digest"); toast(r?.sent ? `Sent to ${r.email}.` : "Nothing to send."); } catch (e) { toast(e.message); } a.disabled = false; a.textContent = "Send me today's email now"; }
+}
+
 /* ================= Access approval ================= */
 const accessOk = acc => !!acc?.approved && (acc.is_admin || (!!acc.activated_at && (!acc.access_until || new Date(acc.access_until) > new Date())));
 const fmtWhen = t => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
@@ -2486,7 +2636,7 @@ function accessCard() {
   const now = new Date(), expired = x => x.approved && !x.is_admin && x.access_until && new Date(x.access_until) <= now;
   const pend = list.filter(x => !x.approved), ended = list.filter(expired), ok = list.filter(x => x.approved && !expired(x));
   const trialRow = (x, isEnded) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${isEnded ? `<span class="flag">trial ended ${esc(fmtWhen(x.access_until))}</span>` : x.access_until ? `trial until ${esc(fmtWhen(x.access_until))}` : x.is_admin ? "admin" : "permanent"}${!x.is_admin && !x.activated_at ? ` · <span class="flag" style="color:var(--orange)!important">not activated yet${x.activation_sent_at ? ", link sent " + esc(timeAgo(x.activation_sent_at)) : ""}</span>` : ""}</small></div>
-    <div class="acc-btns">${!x.is_admin && !x.activated_at && !isEnded ? `<button class="btn ghost" data-action="acc-activate" data-id="${x.id}">Resend activation email</button>` : ""}<button class="btn ghost" data-action="acc-email" data-id="${x.id}">Change email</button>${x.is_admin ? "" : `${x.access_until ? `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">${isEnded ? "Give 1 more week" : "+1 week"}</button><button class="btn ghost" data-action="acc-grant" data-id="${x.id}">Make permanent</button>` : `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">Change to 1-week trial</button>`}<button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div></div>`;
+    <div class="acc-btns">${!x.is_admin && !x.activated_at && !isEnded ? `<button class="btn ghost" data-action="acc-activate" data-id="${x.id}">Resend activation email</button>` : ""}<button class="btn ghost" data-action="acc-email" data-id="${x.id}">Change email</button>${x.id !== me() ? `<button class="btn ghost" data-action="acc-mfa" data-id="${x.id}" title="If they lost their phone">Reset 2-step sign-in</button>` : ""}${x.is_admin ? "" : `${x.access_until ? `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">${isEnded ? "Give 1 more week" : "+1 week"}</button><button class="btn ghost" data-action="acc-grant" data-id="${x.id}">Make permanent</button>` : `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">Change to 1-week trial</button>`}<button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div></div>`;
   const row = (x, pending) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${pending ? "asked " + timeAgo(x.created_at) : x.is_admin ? "admin" : "approved"}</small></div><div class="acc-btns"><button class="btn" data-action="acc-grant" data-id="${x.id}">Permanent</button><button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">1-week trial</button><button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Reject</button></div></div>`;
   return `<div class="card"><div class="card-h"><h2>👤 Access requests</h2>${pend.length ? `<span class="badge-n">${pend.length}</span>` : ""}</div>
     ${U.access === "loading" ? `<p class="muted" style="margin:0">Loading…</p>` : U.access?.error ? `<p class="muted" style="margin:0">${esc(U.access.error)}</p>` : `
@@ -2514,6 +2664,8 @@ async function boot() {
     if (!user) { authScreen(); return; }
     S.user = user;
     if (S.mode === "cloud") {
+      const mf = await api.mfaState().catch(() => null);
+      if (mf?.factor && mf.current !== "aal2") { mfaScreen(mf.factor); return; }
       const acc = await api.myAccess();
       if (!accessOk(acc)) { pendingScreen(acc); return; }
       U.isAdmin = !!acc.is_admin;

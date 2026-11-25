@@ -101,3 +101,8 @@ do $$ begin
     alter publication supabase_realtime add table public.calendar_events;
   end if;
 end $$;
+
+select cron.schedule('taskerbay-calendar', '*/10 * * * *', $c$
+  select net.http_post(url := 'https://qjuhoknmsveumdxadsgz.supabase.co/functions/v1/calendar',
+    headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',(select cron_secret from private.push_config where id = 1)),
+    body := '{}'::jsonb, timeout_milliseconds := 60000) $c$);
