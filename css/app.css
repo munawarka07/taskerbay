@@ -834,3 +834,6 @@ main{min-width:0}
 .fdays{grid-template-columns:repeat(7,minmax(0,1fr))}.fdays button em{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .row .t{overflow-wrap:anywhere}
 html,body{overflow-x:hidden}
+.tpl-grp{margin-top:14px;border:1px dashed var(--line);border-radius:14px;padding:8px 10px}
+.tpl-grp summary{cursor:pointer;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:4px 2px}
+.tpl-grp summary small{font-weight:600;margin-left:4px}.tpl-grp[open] .tpl-list{margin-top:8px}

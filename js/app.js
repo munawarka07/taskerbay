@@ -460,7 +460,7 @@ function hintFor(raw) {
   return hintCore(v, raw) + keepBtn;
 }
 function hintCore(v, raw) {
-  if (!v.trim()) return `<span>Shortcuts:</span><code>today</code><code>fri</code><code>3pm</code><code>#work</code><code>!high</code>${isTeam() ? "<code>@name</code>" : ""}<code>*</code><code>every month on 25th</code><span>· or update one:</span><code>payroll done</code><code>move visa to thu 3pm</code>`;
+  if (!v.trim()) return `<span>Shortcuts:</span><code>today</code><code>fri</code><code>3pm</code><code>#work</code><code>!high</code>${isTeam() ? "<code>@name</code>" : ""}<code>*</code><code>every month on 25th</code><span>· or update one:</span><code>report done</code><code>move dentist to thu 3pm</code>`;
   const it = parseIntent(v);
   if (it) {
     const st = it.stage ? E.stagesOf(it.task).find(s => s.key === it.stage) : null, fake = { ...it.task, due_date: it.due_date ?? it.task.due_date, due_time: it.due_time ?? it.task.due_time };
@@ -749,7 +749,7 @@ function refreshTaskSheet(first) {
       ${t.status_note ? `<div class="status-now"><span class="lab">Current status</span><p>${esc(t.status_note)}</p><small>${t.status_at ? timeAgo(t.status_at) : ""}${t.due_date ? ` · next: ${esc(dueLabel(t))}` : ""}</small></div>` : ""}
       <div class="activity">${ups.length ? ups.map(u => u.kind === "comment" ? `<div class="upd">${avatar(u.author_id, true)}<div class="bubble"><b>${esc(nameOf(u.author_id))}</b><small>${timeAgo(u.created_at)}</small><p>${esc(u.body)}</p>${u.new_due_date || u.new_due_time ? `<em class="next">→ Next: ${esc(dueLabel({ due_date: u.new_due_date || t.due_date, due_time: u.new_due_time || (u.new_due_date ? null : t.due_time) }))}</em>` : ""}</div></div>` : `<div class="upd sys"><i style="--c:${u.to_stage ? (E.stagesOf(t).find(s => s.key === u.to_stage)?.color || "var(--muted)") : "var(--muted)"}"></i><span>${esc(u.body)} · ${timeAgo(u.created_at)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:13px">No updates yet. Add the latest status below. You can move the date and time at the same time, and every update stays here as a timeline.</p>`}</div>
       <div class="post status-form">
-        <label for="upd-text" class="sr">Status update</label><textarea class="inp" id="upd-text" placeholder="What's the latest? e.g. Collect docs done, next is send to HR, remind me Thursday 10am"></textarea>
+        <label for="upd-text" class="sr">Status update</label><textarea class="inp" id="upd-text" placeholder="What's the latest? e.g. Draft done, next is send for review, remind me Thursday 10am"></textarea>
         <div id="upd-preview" class="upd-preview"></div>
         <div class="fgrid upd-grid">
           <div class="field"><label for="upd-date">Next date</label><input class="inp" type="date" id="upd-date" value="${t.due_date || ""}"></div>
@@ -1333,7 +1333,7 @@ function vWorkflows() {
   <div class="view-h"><div><h1>Workflows</h1><p>The stages a task moves through. Each task can use a different one.</p></div>${admin ? `<button class="btn" data-action="wf-new">${I.plus}New workflow</button>` : ""}</div>
   <div class="list">${E.workflows().map(w => { const used = S.db.tasks.filter(t => t.workflow_id === w.id && !E.isDone(t)).length; return `<div class="card hov" style="cursor:pointer" data-action="wf-edit" data-id="${w.id}"><div class="card-h"><h2>${esc(w.icon)} ${esc(w.name)} ${w.is_default ? `<span class="chip today" style="margin-left:6px">Default</span>` : ""}</h2><span class="sub">${used} active task${used === 1 ? "" : "s"}</span></div>
     <div class="stages">${w.stages.map((s, i) => `<span class="stage-chip" style="--c:${s.color}">${esc(s.name)}</span>${i < w.stages.length - 1 ? `<span class="muted">→</span>` : ""}`).join("")}</div></div>`; }).join("")}</div>
-  <p class="muted mt" style="font-size:13px">Tip: the <b>Payroll cycle</b> workflow matches a monthly payroll run. Combine it with <b>Repeat: every month</b> and steps, and next month's run is created for you when this one is done.</p>`;
+  <p class="muted mt" style="font-size:13px">Tip: build a workflow for any process you repeat (a monthly report, a client project, a payroll run). Combine it with <b>Repeat: every month</b> and steps, and next month's run is created for you when this one is done.</p>`;
 }
 function wfSheet(w) {
   const isNew = !w; w = w ? JSON.parse(JSON.stringify(w)) : { id: uuid(), name: "", icon: "🔀", is_default: false, position: S.db.workflows.length, stages: [{ key: "todo", name: "To do", color: "#64748B", type: "todo" }, { key: "doing", name: "In progress", color: "#3B6FD4", type: "active" }, { key: "done", name: "Done", color: "#2E9B5B", type: "done" }] };
@@ -1391,7 +1391,7 @@ function autoSheet(a, forceNew) {
   const c = a.conditions || {};
   openSheet(`<h2 id="sheet-title">${isNew ? "New automation" : "Edit automation"}</h2>
   <form data-form="automation">
-    <div class="field"><label for="au-name">Name</label><input class="inp" id="au-name" value="${esc(a.name)}" placeholder="e.g. Ask Sara to approve payroll" required autofocus></div>
+    <div class="field"><label for="au-name">Name</label><input class="inp" id="au-name" value="${esc(a.name)}" placeholder="e.g. Ask Sara to review the report" required autofocus></div>
     <div class="field"><label for="au-trigger">When</label><select class="inp" id="au-trigger">${Object.entries(E.TRIGGERS).map(([k, l]) => `<option value="${k}" ${a.trigger === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
     <div class="fgrid" style="margin-top:0">
       <div class="field" id="au-stage-f" style="${a.trigger === "stage_changed" ? "" : "display:none"}"><label for="au-stage">Stage</label><select class="inp" id="au-stage"><option value="">Any stage</option>${allStages.map(s => `<option value="${esc(s.key)}" ${c.to_stage === s.key ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>
@@ -1453,7 +1453,7 @@ function chooser() {
   <button data-action="routine-new"><span class="ic">${I.routine}</span><b>Routine item</b><small>A daily habit</small></button>
   <button data-action="auto-new"><span class="ic g">${I.bolt}</span><b>Automation</b><small>A rule that runs itself</small></button>
   <button data-action="bulk-import"><span class="ic">📄</span><b>From Excel / list</b><small>Import a file or paste many</small></button>
-  <button data-action="tpl-open"><span class="ic g">📋</span><b>From a template</b><small>Payroll, onboarding, exit, visa…</small></button></div>
+  <button data-action="tpl-open"><span class="ic g">📋</span><b>From a template</b><small>Projects, trips, events, bills…</small></button></div>
   ${AI_ON ? `<button class="ai-btn" data-action="capture" style="width:100%;justify-content:center;padding:14px;margin-top:4px"><span class="spark">✨</span>Just say it, Claude sorts it out</button>` : ""}`);
 }
 /* ================= Bulk add: paste many lines, each becomes a task ================= */
@@ -1610,10 +1610,10 @@ function bulkSheet(prefill = "") {
     <p class="muted" style="margin:-4px 0 12px;font-size:13.5px">Paste a list (one task per line) or import an Excel / CSV file. Dates and times are picked up; rows without a date get the default reminder below, and you can change any row before saving.</p>
     <div class="bk-import"><label class="btn ghost" for="bk-file">📄 Import Excel / CSV file</label><input type="file" id="bk-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden><span class="muted">Read on your device, never uploaded</span></div>
     <div id="bk-file-info"></div>
-    <div class="field" id="bk-text-f"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Prepare December payroll by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
+    <div class="field" id="bk-text-f"><label for="bk-text">Your list</label><textarea class="inp" id="bk-text" rows="6" placeholder="Send monthly report by 28/11\nCall bank about loan settlement tomorrow 11am\nRenew Emirates ID - urgent\nBook car service sat">${esc(prefill)}</textarea></div>
     <div class="bk-def"><span class="lab">Default reminder for lines without a date</span>
       <div class="bk-def-row"><input class="inp" type="date" id="bk-date" value="${U.bulk.def.date}" aria-label="Default date"><input class="inp" type="time" id="bk-time" value="${U.bulk.def.time}" aria-label="Default time">${remindSelect("bk-rem", 0, 'aria-label="Reminder for all"')}<button type="button" class="pick" data-action="bk-def" data-v="next">Next working day 9 AM</button></div>
-      <label class="bk-chk" id="bk-upd-l"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “payroll done”)</label>
+      <label class="bk-chk" id="bk-upd-l"><input type="checkbox" id="bk-upd" checked> Lines about existing tasks update them (e.g. “report done”)</label>
       <label class="bk-chk"><input type="checkbox" id="bk-spell" checked> Fix spelling mistakes (names are never changed)</label></div>
     <div id="bk-preview"></div>
     <div class="sheet-actions"><button class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" data-action="bk-save" id="bk-save" disabled>Add tasks</button></div>`, "tall wide");
@@ -1657,7 +1657,7 @@ function newTaskSheet(preset = {}) {
   const tk = dkey(), tm = dkey(addDays(new Date(), 1));
   openSheet(`<h2 id="sheet-title">New task</h2>
   <form data-form="newtask">
-    <div class="field"><label for="nt-title">Task</label><input class="inp" id="nt-title" required autofocus placeholder="What needs doing? Try: Payroll review fri 3pm !high"></div>
+    <div class="field"><label for="nt-title">Task</label><input class="inp" id="nt-title" required autofocus placeholder="What needs doing? Try: Review proposal fri 3pm !high"></div>
     <div class="field"><span class="lab">Due</span><div class="picks" data-quickdue><button type="button" class="pick ${preset.due_date === tk ? "on" : ""}" data-v="${tk}">Today</button><button type="button" class="pick ${preset.due_date === tm ? "on" : ""}" data-v="${tm}">Tomorrow</button><button type="button" class="pick ${!preset.due_date ? "on" : ""}" data-v="">No date</button></div><input class="inp" type="date" id="nt-due" value="${preset.due_date || ""}" aria-label="Due date" style="margin-top:6px"></div>
     <div class="fgrid" style="margin:0 0 4px"><div class="field"><label for="nt-time">Time (optional)</label><input class="inp" type="time" id="nt-time" value="${preset.due_time || ""}"></div><div class="field"><label for="nt-rem">Reminder</label>${remindSelect("nt-rem", 0)}</div></div>
     <div class="fgrid" style="margin-top:0">
@@ -1673,7 +1673,7 @@ function newTaskSheet(preset = {}) {
 function captureSheet() {
   U.sheet = { type: "capture" };
   openSheet(`<h2 id="sheet-title">✨ Just say it</h2><p class="muted" style="margin:-6px 0 12px;font-size:13.5px">Write everything on your mind. Claude turns it into tasks (with steps) and expenses for you to check.</p>
-  <div class="field"><label for="cap-text" class="sr">What's on your mind</label><textarea class="inp" id="cap-text" style="min-height:120px" autofocus placeholder="e.g. Paid 45 for a taxi. Payroll needs approval from Sara by Thursday, urgent: check overtime, send summary, upload WPS file. Call the bank about the loan tomorrow."></textarea>
+  <div class="field"><label for="cap-text" class="sr">What's on your mind</label><textarea class="inp" id="cap-text" style="min-height:120px" autofocus placeholder="e.g. Paid 45 for a taxi. The proposal needs sign-off from Sara by Thursday, urgent: check numbers, send summary, book the venue. Call the bank about the loan tomorrow."></textarea>
   <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="ai-btn" data-action="capture-run"><span class="spark">✨</span>Sort it out</button></div></div><div id="cap-out"></div>`);
 }
 let palItems = [], palSel = 0;
@@ -1709,7 +1709,7 @@ function inviteSheet() {
 function wsSheet(edit) {
   U.sheet = { type: "ws", edit };
   const w = edit ? ws() : { name: "", icon: "👥" };
-  openSheet(`<h2 id="sheet-title">${edit ? "Rename workspace" : "New workspace"}</h2>${edit ? "" : `<p class="muted" style="margin:-6px 0 12px;font-size:13.5px">A separate space with its own tasks, workflows and members, e.g. "Family" or "HR Team".</p>`}
+  openSheet(`<h2 id="sheet-title">${edit ? "Rename workspace" : "New workspace"}</h2>${edit ? "" : `<p class="muted" style="margin:-6px 0 12px;font-size:13.5px">A separate space with its own tasks, workflows and members, e.g. "Family" or "Sales team".</p>`}
   <form data-form="ws"><div class="two"><div class="field"><label for="ws-name">Name</label><input class="inp" id="ws-name" value="${esc(w.name)}" required autofocus></div><div class="field"><label for="ws-icon">Icon</label><input class="inp" id="ws-icon" value="${esc(w.icon)}" maxlength="4"></div></div>
   <div class="sheet-actions"><button class="btn" type="submit">${edit ? "Save" : "Create"}</button></div></form>`);
 }
@@ -2463,7 +2463,9 @@ function templateSheet(key) {
   U.sheet = { type: "tpl" };
   if (!key) {
     openSheet(`<h2 id="sheet-title">Start from a template</h2><p class="muted" style="margin:-4px 0 12px;font-size:14px">Creates the main task and every step with its own date. Change anything afterwards.</p>
-    <div class="tpl-list">${list.map(t => `<button class="tpl-card" data-action="tpl-pick" data-k="${esc(t.key)}"><span class="ic">${esc(t.icon || "📋")}</span><span><b>${esc(t.name)}</b><small>${esc(t.blurb || `${t.steps.length} steps`)}</small></span><em>${t.steps.length} steps</em></button>`).join("")}</div>
+    ${(() => { const card = t => `<button class="tpl-card" data-action="tpl-pick" data-k="${esc(t.key)}"><span class="ic">${esc(t.icon || "📋")}</span><span><b>${esc(t.name)}</b><small>${esc(t.blurb || `${t.steps.length} steps`)}</small></span><em>${t.steps.length} steps</em></button>`;
+      const groups = [["Mine", list.filter(t => t.mine)], ...TP.CATS.map(c => [c, list.filter(t => !t.mine && t.cat === c)])].filter(g => g[1].length);
+      return groups.map(([c, ts], i) => c === "HR & people" ? `<details class="tpl-grp"><summary>${esc(c)} <small>${ts.length}</small></summary><div class="tpl-list">${ts.map(card).join("")}</div></details>` : `<div class="tp-h" style="margin:${i ? 14 : 0}px 0 6px">${esc(c === "Mine" ? "My templates" : c)}</div><div class="tpl-list">${ts.map(card).join("")}</div>`).join(""); })()}
     <p class="muted" style="font-size:12.5px;margin:12px 0 0">Tip: open any task with steps and tap <b>📋 Save as template</b> to add your own here.</p>`, "wide");
     return;
   }
@@ -2474,7 +2476,7 @@ function templateSheet(key) {
   const who = (id, sel) => `<select class="inp" id="${id}">${(members.length ? members : [me()]).map(u => `<option value="${u}" ${u === sel ? "selected" : ""}>${esc(nameOf(u))}${u === me() ? " (me)" : ""}</option>`).join("")}</select>`;
   openSheet(`<h2 id="sheet-title">${esc(t.icon || "📋")} ${esc(t.name)}</h2>
   <form data-form="tpl" data-k="${esc(t.key)}" autocomplete="off">
-    ${needsName ? `<div class="field"><label for="tp-name">Employee name</label><input class="inp" id="tp-name" required placeholder="e.g. Ahmed Ali"></div>` : ""}
+    ${needsName ? `<div class="field"><label for="tp-name">${esc(t.nameLabel || "Name")}</label><input class="inp" id="tp-name" required></div>` : ""}
     <div class="grid g-2" style="gap:10px"><div class="field"><label for="tp-date">${esc(t.anchor || "Due date")}</label><input class="inp" type="date" id="tp-date" value="${anchor}" required></div>
     ${members.length > 1 ? `<div class="field"><label for="tp-who">Steps assigned to</label>${who("tp-who", me())}</div>` : ""}</div>
     ${members.length > 1 && t.steps.some(s => s[2] === "approval") ? `<div class="field"><label for="tp-appr">Approval by</label>${who("tp-appr", me())}</div>` : ""}
