@@ -689,3 +689,61 @@ do $$ declare t text; begin
     end if;
   end loop;
 end $$;
+
+-- v10: permanent access or time-limited trial
+alter table public.profiles add column if not exists access_until timestamptz;
+alter table public.profiles add column if not exists trial_notified boolean not null default false;
+
+create or replace function public.is_approved() returns boolean
+language sql stable security definer set search_path = '' as $$
+  select coalesce((select approved and (is_admin or access_until is null or access_until > now()) from public.profiles where id = (select auth.uid())), false)
+$$;
+
+drop function if exists public.set_access(uuid, boolean);
+create or replace function public.set_access(target uuid, allow boolean, days integer default null) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not coalesce((select p.is_admin from public.profiles p where p.id = (select auth.uid())), false) then raise exception 'Only admins can approve accounts'; end if;
+  if target = (select auth.uid()) then raise exception 'You can''t change your own access'; end if;
+  if days is not null and (days < 1 or days > 365) then raise exception 'Trial length must be 1 to 365 days'; end if;
+  if allow then
+    update public.profiles set approved = true, trial_notified = false,
+      access_until = case when days is null then null else now() + make_interval(days => days) end
+    where id = target;
+    insert into public.notifications (user_id, body, actor_id) values (target,
+      case when days is null then 'Your TaskerBay access was approved. Welcome!'
+           else format('Your TaskerBay trial is active until %s (Dubai time). Welcome!', to_char((now() + make_interval(days => days)) at time zone 'Asia/Dubai', 'Dy DD Mon, HH12:MI AM')) end,
+      (select auth.uid()));
+  else
+    delete from auth.users where id = target;
+  end if;
+end $$;
+revoke all on function public.set_access(uuid, boolean, integer) from public, anon;
+grant execute on function public.set_access(uuid, boolean, integer) to authenticated;
+
+drop function if exists public.access_requests();
+create or replace function public.access_requests() returns table(id uuid, full_name text, email text, approved boolean, is_admin boolean, created_at timestamptz, access_until timestamptz)
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not coalesce((select p.is_admin from public.profiles p where p.id = (select auth.uid())), false) then raise exception 'Only admins can see access requests'; end if;
+  return query select p.id, p.full_name, coalesce(nullif(p.email, ''), u.email::text), p.approved, p.is_admin, p.created_at, p.access_until
+    from public.profiles p left join auth.users u on u.id = p.id order by p.approved, p.created_at desc;
+end $$;
+revoke all on function public.access_requests() from public, anon;
+grant execute on function public.access_requests() to authenticated;
+
+-- every 10 minutes: tell the admin when a trial has ended (access already stops at that moment)
+create or replace function private.trial_check() returns void
+language plpgsql security definer set search_path = '' as $$
+declare r record;
+begin
+  for r in select p.id, coalesce(nullif(p.full_name, ''), split_part(p.email, '@', 1)) nm, p.email from public.profiles p
+           where p.approved and not p.is_admin and p.access_until is not null and p.access_until <= now() and not p.trial_notified loop
+    update public.profiles set trial_notified = true where id = r.id;
+    insert into public.notifications (user_id, body, actor_id)
+    select a.id, format('Trial ended: %s (%s) can no longer use TaskerBay. Open Settings → Access requests to extend it, make it permanent or remove the account.', r.nm, r.email), null
+    from public.profiles a where a.is_admin;
+  end loop;
+end $$;
+revoke all on function private.trial_check() from public, anon, authenticated;
+select cron.schedule('taskerbay-trials', '*/10 * * * *', 'select private.trial_check()');
