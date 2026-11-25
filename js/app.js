@@ -1933,6 +1933,7 @@ document.addEventListener("click", async e => {
     case "old-done": { a.disabled = true; a.textContent = "Loading…"; try { const n = await api.loadOldDone(S.wsId); U.oldDone = S.wsId; toast(n ? `Loaded ${n} older finished task${n > 1 ? "s" : ""}.` : "No older finished tasks."); } catch (e) { toast(e.message); } render(); break; }
     case "keep-spell": { const inp = a.closest(".qa-hint")?.previousElementSibling?.querySelector?.("input") || $("[data-quick]"); const v = inp?.value || ""; const sp = SP.fix(v); SP.learn(sp.changes.map(c => c.from)); U.keepSpell = v; const h = $(`[data-hint-for="${inp?.id}"]`); if (h) h.innerHTML = hintFor(v); toast("OK, I'll keep your spelling for those words from now on."); break; }
     case "push-on": await enablePush(); break;
+    case "acc-grant": { const x = (U.access || []).find(r => r.id === id), days = a.dataset.days ? +a.dataset.days : null; try { await api.setAccess(id, true, days); toast(days ? `${x?.full_name || "They"} can use TaskerBay for ${days} days.` : `${x?.full_name || "They"} now have permanent access.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "push-test": { const r = await api.testPush().catch(e => ({ error: e.message })); toast(r?.sent ? `Test popup sent to ${r.sent} device${r.sent > 1 ? "s" : ""}.` : r?.error ? `Couldn't send: ${r.error}` : "No device is set up for popups yet."); break; }
@@ -2395,11 +2396,15 @@ setInterval(checkDueAlerts, 15e3);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(checkDueAlerts, 800); });
 
 /* ================= Access approval ================= */
+const accessOk = acc => !!acc?.approved && (acc.is_admin || !acc.access_until || new Date(acc.access_until) > new Date());
+const fmtWhen = t => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 function pendingScreen(acc) {
+  const ended = acc?.approved && acc.access_until && new Date(acc.access_until) <= new Date();
   $("#root").innerHTML = `<div class="auth"><div class="auth-card">
     <div class="brand"><div class="brand-mark"><span></span></div>TaskerBay</div>
-    <h1>Waiting for approval</h1>
-    <p class="lead">Thanks${acc?.full_name ? ", " + esc(acc.full_name.split(" ")[0]) : ""}. Your account (${esc(S.user.email || "")}) has been created and the owner has been notified. You can use TaskerBay as soon as it's approved.</p>
+    ${ended ? `<h1>Your trial has ended</h1>
+    <p class="lead">Your 1-week trial ended on ${esc(fmtWhen(acc.access_until))}. Your tasks are kept safe. Ask the owner to extend your access or make it permanent, then tap <b>Check again</b>.</p>` : `<h1>Waiting for approval</h1>
+    <p class="lead">Thanks${acc?.full_name ? ", " + esc(acc.full_name.split(" ")[0]) : ""}. Your account (${esc(S.user.email || "")}) has been created and the owner has been notified. You can use TaskerBay as soon as it's approved.</p>`}
     <button class="btn" onclick="location.reload()">Check again</button>
     <div class="alt">or</div>
     <button class="btn ghost" id="pend-out">Sign out</button></div></div>`;
@@ -2409,12 +2414,17 @@ function accessCard() {
   if (!U.isAdmin) return "";
   if (!U.access) { U.access = "loading"; api.accessRequests().then(r => { U.access = r || []; render(); }).catch(e => { U.access = { error: e.message }; render(); }); }
   const list = Array.isArray(U.access) ? U.access : [];
-  const pend = list.filter(x => !x.approved), ok = list.filter(x => x.approved);
-  const row = (x, pending) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${pending ? "asked " + timeAgo(x.created_at) : x.is_admin ? "admin" : "approved"}</small></div>${pending ? `<button class="btn" data-action="acc-approve" data-id="${x.id}">Approve</button><button class="btn ghost" data-action="acc-remove" data-id="${x.id}">Reject</button>` : x.is_admin ? "" : `<button class="btn ghost" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div>`;
+  const now = new Date(), expired = x => x.approved && !x.is_admin && x.access_until && new Date(x.access_until) <= now;
+  const pend = list.filter(x => !x.approved), ended = list.filter(expired), ok = list.filter(x => x.approved && !expired(x));
+  const trialRow = (x, isEnded) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${isEnded ? `<span class="flag">trial ended ${esc(fmtWhen(x.access_until))}</span>` : x.access_until ? `trial until ${esc(fmtWhen(x.access_until))}` : x.is_admin ? "admin" : "permanent"}</small></div>
+    <div class="acc-btns">${x.is_admin ? "" : `${x.access_until ? `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">${isEnded ? "Give 1 more week" : "+1 week"}</button><button class="btn ghost" data-action="acc-grant" data-id="${x.id}">Make permanent</button>` : `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">Change to 1-week trial</button>`}<button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div></div>`;
+  const row = (x, pending) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${pending ? "asked " + timeAgo(x.created_at) : x.is_admin ? "admin" : "approved"}</small></div><div class="acc-btns"><button class="btn" data-action="acc-grant" data-id="${x.id}">Permanent</button><button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">1-week trial</button><button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Reject</button></div></div>`;
   return `<div class="card"><div class="card-h"><h2>👤 Access requests</h2>${pend.length ? `<span class="badge-n">${pend.length}</span>` : ""}</div>
     ${U.access === "loading" ? `<p class="muted" style="margin:0">Loading…</p>` : U.access?.error ? `<p class="muted" style="margin:0">${esc(U.access.error)}</p>` : `
     ${pend.length ? pend.map(x => row(x, true)).join("") : `<p class="muted" style="margin:0 0 8px;font-size:14px">No one is waiting. When someone signs up with your access code, they'll appear here and you'll get an alert.</p>`}
-    ${ok.length ? `<details class="acc-ok"><summary>People with access (${ok.length})</summary>${ok.map(x => row(x, false)).join("")}</details>` : ""}`}</div>`;
+    ${ended.length ? `<div class="acc-sec">⏳ Trial ended (${ended.length})</div>${ended.map(x => trialRow(x, true)).join("")}` : ""}
+    ${ok.length ? `<details class="acc-ok" ${ok.some(x => x.access_until) ? "open" : ""}><summary>People with access (${ok.length})</summary>${ok.map(x => trialRow(x, false)).join("")}</details>` : ""}
+    <p class="muted" style="font-size:12.5px;margin:10px 0 0"><b>1-week trial</b>: access stops by itself after 7 days and you get an alert. Their tasks are kept, so you can extend or make it permanent later. <b>Remove</b> deletes the account and its data.</p>`}</div>`;
 }
 function backupCard() {
   if (!U.isAdmin) return "";
@@ -2434,7 +2444,7 @@ async function boot() {
     S.user = user;
     if (S.mode === "cloud") {
       const acc = await api.myAccess();
-      if (!acc.approved) { pendingScreen(acc); return; }
+      if (!accessOk(acc)) { pendingScreen(acc); return; }
       U.isAdmin = !!acc.is_admin;
     }
     await api.loadAll();
@@ -2457,7 +2467,7 @@ async function boot() {
     // Coming back to the app (phone unlocked, tab reopened, back online): fetch the latest from every device
     if (S.mode === "cloud") {
       let hiddenAt = 0, busy = false;
-      const resync = async () => { if (busy) return; busy = true; try { await api.refresh(); } catch (e) {} busy = false; };
+      const resync = async () => { if (busy) return; busy = true; try { const acc = await api.myAccess(); if (!accessOk(acc)) { pendingScreen(acc); busy = false; return; } await api.refresh(); } catch (e) {} busy = false; };
       document.addEventListener("visibilitychange", () => { if (document.hidden) hiddenAt = Date.now(); else if (hiddenAt && Date.now() - hiddenAt > 15e3) resync(); });
       addEventListener("online", resync);
       addEventListener("pageshow", e => { if (e.persisted) resync(); });

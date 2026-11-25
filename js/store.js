@@ -179,9 +179,9 @@ const cloud = {
   async refresh() { const ws = S.wsId; await this.loadAll(); if (ws && S.db.workspaces.some(w => w.id === ws)) await this.loadWorkspace(ws); emit(); },
   async savePush(sub) { const c = await sbClient(); const { error } = await c.from("push_subscriptions").upsert({ ...sub, user_id: S.user.id }, { onConflict: "endpoint" }); if (error) throw error; },
   async removePush(endpoint) { const c = await sbClient(); await c.from("push_subscriptions").delete().eq("endpoint", endpoint); },
-  async myAccess() { const c = await sbClient(); const { data, error } = await c.from("profiles").select("approved, is_admin, full_name").eq("id", S.user.id).maybeSingle(); if (error) throw error; return data || { approved: false, is_admin: false }; },
+  async myAccess() { const c = await sbClient(); const { data, error } = await c.from("profiles").select("approved, is_admin, full_name, access_until").eq("id", S.user.id).maybeSingle(); if (error) throw error; return data || { approved: false, is_admin: false }; },
   async accessRequests() { return this.rpc("access_requests"); },
-  async setAccess(target, allow) { return this.rpc("set_access", { target, allow }); },
+  async setAccess(target, allow, days = null) { return this.rpc("set_access", { target, allow, days }); },
   async testPush() { const c = await sbClient(); const { data, error } = await c.functions.invoke("push", { body: { test: true } }); if (error) throw error; return data; }
 };
 

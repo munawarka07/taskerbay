@@ -804,3 +804,9 @@ main{min-width:0}
 .da-snz-grid .pick{flex:1 0 auto}
 .da-snz-custom{display:flex;gap:8px;margin-top:10px}
 .da-snz-custom .inp{flex:1;min-width:0}
+.acc-row{flex-wrap:wrap}
+.acc-row .who{flex:1;min-width:140px}
+.acc-btns{display:flex;gap:6px;flex-wrap:wrap;width:100%;padding-left:46px}
+.acc-btns .btn{padding:7px 12px;font-size:13px}
+.acc-sec{font-size:12px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px}
+.acc-row .who small{white-space:normal;overflow:visible}
