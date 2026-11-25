@@ -827,3 +827,10 @@ main{min-width:0}
 .tp-d{flex:none;width:96px;color:var(--muted);font-variant-numeric:tabular-nums}
 .tog{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;line-height:1.4}.tog input{margin-top:3px}
 .mfa-qr{display:flex;justify-content:center}.mfa-qr img{width:180px;height:180px;background:#fff;border-radius:12px;padding:8px}
+/* keep every column inside the screen: long one-line text (status notes, titles) must shrink, not widen the page */
+.grid>*,.card,.list,.row{min-width:0}
+.g-hero,.g-2{grid-template-columns:minmax(0,1fr)}
+@media (min-width:700px){.g-hero{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}.g-2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.fdays{grid-template-columns:repeat(7,minmax(0,1fr))}.fdays button em{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.row .t{overflow-wrap:anywhere}
+html,body{overflow-x:hidden}
