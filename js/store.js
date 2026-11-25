@@ -65,7 +65,10 @@ const cloud = {
     const c = await sbClient();
     const { data, error } = await c.auth.signUp({ email, password, options: { data: { full_name: name, access_code: code }, emailRedirectTo: location.origin + location.pathname } });
     if (error) throw error;
-    return !!data.session;
+    if (data.session) return true;
+    // accounts are confirmed straight away on the server, so sign in right after creating it
+    const r = await c.auth.signInWithPassword({ email, password });
+    return !!r.data?.session;
   },
   async magic(email) { const c = await sbClient(); const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
   async google() { const c = await sbClient(); const { error } = await c.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname } }); if (error) throw error; },

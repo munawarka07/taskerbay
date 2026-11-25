@@ -747,3 +747,6 @@ begin
 end $$;
 revoke all on function private.trial_check() from public, anon, authenticated;
 select cron.schedule('taskerbay-trials', '*/10 * * * *', 'select private.trial_check()');
+
+-- v11: no confirmation email step (access code + owner approval decide who gets in)
+-- private.require_signup_code() now also sets: new.email_confirmed_at := coalesce(new.email_confirmed_at, now());

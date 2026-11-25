@@ -2141,7 +2141,7 @@ function authScreen(mode = "in", msg = null) {
     const email = $("#au-e").value.trim(), pw = $("#au-p")?.value;
     try {
       if (mode === "in") { await api.signIn(email, pw); location.reload(); }
-      else if (mode === "up") { const live = await api.signUp($("#au-n").value.trim(), email, pw, $("#au-c").value.trim().toUpperCase()); if (live) location.reload(); else authScreen("in", { ok: true, text: "Check your email to confirm your account, then sign in." }); }
+      else if (mode === "up") { const live = await api.signUp($("#au-n").value.trim(), email, pw, $("#au-c").value.trim().toUpperCase()); if (live) location.reload(); else authScreen("in", { ok: true, text: "Account created. Sign in with your email and password." }); }
       else if (mode === "magic") { await api.magic(email); authScreen("magic", { ok: true, text: `We sent a sign-in link to ${email}. Open it on this device.` }); }
       else if (mode === "reset") { await api.reset(email); authScreen("in", { ok: true, text: "If that email has an account, a reset link is on its way." }); }
     } catch (err) {
