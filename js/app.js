@@ -2349,6 +2349,10 @@ function alertBeep() {
   try { const C = window.AudioContext || window.webkitAudioContext; const c = new C(); [0, .22, .44].forEach(o => { const g = c.createGain(), osc = c.createOscillator(); osc.type = "sine"; osc.frequency.value = 880; g.gain.setValueAtTime(0.0001, c.currentTime + o); g.gain.exponentialRampToValueAtTime(0.25, c.currentTime + o + .02); g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + o + .18); osc.connect(g).connect(c.destination); osc.start(c.currentTime + o); osc.stop(c.currentTime + o + .2); }); } catch (e) {}
   try { navigator.vibrate?.([200, 100, 200]); } catch (e) {}
 }
+const SNOOZE = [5, 10, 15, 30, 60, 120, 240];
+const snzLabel = m => m >= 60 ? `${m / 60} h` : `${m} min`;
+const lastSnooze = () => { try { const v = +localStorage.getItem("tb.snooze"); return SNOOZE.includes(v) ? v : 10; } catch (e) { return 10; } };
+const saveSnooze = m => { try { localStorage.setItem("tb.snooze", String(m)); } catch (e) {} };
 function showDueAlert(t, kind) {
   markAlert(alertKey(t, kind)); U.dueAlert = t.id;
   const left = Math.round((dueAt(t) - Date.now()) / 60e3);
@@ -2359,14 +2363,23 @@ function showDueAlert(t, kind) {
     <div class="da-t" id="da-t">${esc(t.title)}</div>
     ${t.status_note ? `<div class="da-note">💬 ${esc(t.status_note)}</div>` : ""}
     <div class="da-meta"><span class="chip" style="color:${PRI_C[t.priority]}">${esc(t.priority)}</span><span class="chip">${esc(t.area)}</span></div>
-    <div class="da-actions"><button class="btn" data-da="done">✓ Done</button><button class="btn ghost" data-da="snooze">Snooze 10 min</button><button class="btn ghost" data-da="open">Open</button></div>
+    <div class="da-actions"><button class="btn" data-da="done">✓ Done</button><button class="btn ghost" data-da="snz" data-m="${lastSnooze()}">Snooze ${snzLabel(lastSnooze())}</button><button class="btn ghost" data-da="snz-more" aria-expanded="false">More…</button><button class="btn ghost" data-da="open">Open</button></div>
+    <div class="da-snooze" hidden><div class="da-snz-h">Snooze for</div>
+      <div class="da-snz-grid">${SNOOZE.map(m => `<button class="pick ${m === lastSnooze() ? "on" : ""}" data-da="snz" data-m="${m}">${snzLabel(m)}</button>`).join("")}<button class="pick" data-da="snz" data-m="tomorrow">Tomorrow 9 AM</button><button class="pick" data-da="snz" data-m="nextwd">Next working day 9 AM</button></div>
+      <div class="da-snz-custom"><input class="inp" type="datetime-local" id="da-when" aria-label="Pick a date and time"><button class="btn ghost" data-da="snz-custom">Set</button></div></div>
     <button class="da-x" data-da="close" aria-label="Dismiss">✕</button></div>`;
   host.classList.add("on"); alertBeep();
+  const when = $("#da-when"); if (when) { const d = new Date(Date.now() + 60 * 60e3); when.value = `${dkey(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`; when.min = `${dkey()}T00:00`; }
   host.onclick = async e => {
     const b = e.target.closest("[data-da]"); if (!b) return;
-    const act = b.dataset.da, cur = task(t.id); host.classList.remove("on"); U.dueAlert = null;
+    const act = b.dataset.da, cur = task(t.id);
+    if (act === "snz-more") { const p = host.querySelector(".da-snooze"); p.hidden = !p.hidden; b.setAttribute("aria-expanded", String(!p.hidden)); b.textContent = p.hidden ? "More…" : "Hide"; return; }
+    let target = null;
+    if (act === "snz") { const m = b.dataset.m; target = m === "tomorrow" ? (() => { const d = addDays(new Date(), 1); d.setHours(9, 0, 0, 0); return d; })() : m === "nextwd" ? (() => { const d = parseKey(nextWorkday()); d.setHours(9, 0, 0, 0); return d; })() : new Date(Date.now() + +m * 60e3); if (/^\d+$/.test(m)) saveSnooze(+m); }
+    if (act === "snz-custom") { const v = $("#da-when")?.value; const d = v ? new Date(v) : null; if (!d || isNaN(d) || d <= new Date()) { toast("Pick a time in the future."); return; } target = d; }
+    host.classList.remove("on"); U.dueAlert = null;
     if (act === "done" && cur) { await E.completeTask(cur); toast(`Done: ${cur.title}`); }
-    if (act === "snooze" && cur) { const d = new Date(Math.max(Date.now(), dueAt(cur)) + 10 * 60e3); await E.changeTask(cur, { due_date: dkey(d), due_time: `${pad(d.getHours())}:${pad(d.getMinutes())}` }); toast(`Snoozed to ${pad(d.getHours())}:${pad(d.getMinutes())}`); }
+    if (target && cur) { await E.changeTask(cur, { due_date: dkey(target), due_time: `${pad(target.getHours())}:${pad(target.getMinutes())}` }); toast(`Snoozed to ${target.toDateString() === new Date().toDateString() ? "" : target.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + " "}${fmtTime(`${pad(target.getHours())}:${pad(target.getMinutes())}`)}`); }
     if (act === "open" && cur) openTask(cur.id);
     setTimeout(checkDueAlerts, 600);
   };

@@ -684,7 +684,7 @@ main{min-width:0}
 .da-t{font-size:20px;font-weight:800;margin:8px 0 4px;overflow-wrap:anywhere}
 .da-note{color:var(--muted);font-weight:600;font-size:13.5px;margin-bottom:4px}
 .da-meta{display:flex;gap:6px;margin:8px 0 14px}
-.da-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.da-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .da-actions .btn{padding:10px 6px;font-size:13.5px}
 .da-x{position:absolute;top:10px;right:12px;background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer;padding:6px}
 
@@ -797,3 +797,10 @@ main{min-width:0}
 .bk-auto.warn{background:var(--gold-soft);color:var(--orange)}
 .bk-note{font-size:11.5px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bk-cols summary{cursor:pointer;font-size:13px;color:var(--muted);margin-top:6px}.bk-cols summary u{color:var(--accent);font-weight:700}
+.da-snooze{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.da-snooze[hidden]{display:none}
+.da-snz-h{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}
+.da-snz-grid{display:flex;flex-wrap:wrap;gap:6px}
+.da-snz-grid .pick{flex:1 0 auto}
+.da-snz-custom{display:flex;gap:8px;margin-top:10px}
+.da-snz-custom .inp{flex:1;min-width:0}
