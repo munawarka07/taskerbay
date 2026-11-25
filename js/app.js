@@ -1431,6 +1431,7 @@ function vSettings() {
     ${accessCard()}
     ${calendarCard()}
     ${digestCard()}
+    ${packsCard()}
     ${mfaCard()}
     ${pushCard()}
     ${backupCard()}
@@ -1993,6 +1994,11 @@ document.addEventListener("click", async e => {
 function reopenAuto() { const s = U.sheet; autoSheet(s.a, s.isNew); }
 
 document.addEventListener("change", async e => {
+  if (e.target.dataset?.pack) { const k = e.target.dataset.pack, cur = new Set(myPacks()); e.target.checked ? cur.add(k) : cur.delete(k); const v = [...cur], pr = profile(me());
+    try { localStorage.setItem("tb.packs", JSON.stringify(v)); } catch (err) {}
+    if (pr) localUpsert("profiles", { ...pr, template_packs: v });
+    if (S.mode === "cloud") { try { await api.updateProfile({ template_packs: v }); } catch (err) { toast(err.message); return; } }
+    toast(e.target.checked ? "Pack added to your templates." : "Pack removed."); return; }
   if (e.target.id === "tp-date") { tplPreview(); return; }
   if (e.target.id === "dg-hour") { const h = +e.target.value, pr = profile(me()); try { await api.updateProfile({ email_digest_hour: h }); if (pr) localUpsert("profiles", { ...pr, email_digest_hour: h }); toast("Saved."); } catch (err) { toast(err.message); } return; }
   if (U.bulk && e.target.dataset?.bk === "on") { const r = U.bulk.rows[+e.target.dataset.i]; if (r) { r.on = e.target.checked; bulkRefresh(false); } return; }
@@ -2457,7 +2463,9 @@ setInterval(checkDueAlerts, 15e3);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(checkDueAlerts, 800); });
 
 /* ================= Templates ================= */
-const allTemplates = () => [...TP.BUILT_IN, ...(S.db.task_templates || []).map(r => ({ ...r.data, id: r.id, key: "u:" + r.id, name: r.name, mine: true }))];
+// optional packs (HR & people) only show for people who switch them on in Settings
+const myPacks = () => profile(me())?.template_packs || (() => { try { return JSON.parse(localStorage.getItem("tb.packs") || "[]"); } catch (e) { return []; } })();
+const allTemplates = () => [...TP.BUILT_IN.filter(t => !t.pack || myPacks().includes(t.pack)), ...(S.db.task_templates || []).map(r => ({ ...r.data, id: r.id, key: "u:" + r.id, name: r.name, mine: true }))];
 function templateSheet(key) {
   const list = allTemplates();
   U.sheet = { type: "tpl" };
@@ -2465,7 +2473,7 @@ function templateSheet(key) {
     openSheet(`<h2 id="sheet-title">Start from a template</h2><p class="muted" style="margin:-4px 0 12px;font-size:14px">Creates the main task and every step with its own date. Change anything afterwards.</p>
     ${(() => { const card = t => `<button class="tpl-card" data-action="tpl-pick" data-k="${esc(t.key)}"><span class="ic">${esc(t.icon || "📋")}</span><span><b>${esc(t.name)}</b><small>${esc(t.blurb || `${t.steps.length} steps`)}</small></span><em>${t.steps.length} steps</em></button>`;
       const groups = [["Mine", list.filter(t => t.mine)], ...TP.CATS.map(c => [c, list.filter(t => !t.mine && t.cat === c)])].filter(g => g[1].length);
-      return groups.map(([c, ts], i) => c === "HR & people" ? `<details class="tpl-grp"><summary>${esc(c)} <small>${ts.length}</small></summary><div class="tpl-list">${ts.map(card).join("")}</div></details>` : `<div class="tp-h" style="margin:${i ? 14 : 0}px 0 6px">${esc(c === "Mine" ? "My templates" : c)}</div><div class="tpl-list">${ts.map(card).join("")}</div>`).join(""); })()}
+      return groups.map(([c, ts], i) => `<div class="tp-h" style="margin:${i ? 14 : 0}px 0 6px">${esc(c === "Mine" ? "My templates" : c)}</div><div class="tpl-list">${ts.map(card).join("")}</div>`).join(""); })()}
     <p class="muted" style="font-size:12.5px;margin:12px 0 0">Tip: open any task with steps and tap <b>📋 Save as template</b> to add your own here.</p>`, "wide");
     return;
   }
@@ -2556,6 +2564,11 @@ async function mfaAction(act, a) {
   if (act === "mfa-off") { if (!U.mfa?.factor) return; a.disabled = true; try { await api.mfaOff(U.mfa.factor.id); toast("2-step sign-in is off."); } catch (e) { toast(e.message); } U.mfa = undefined; render(); }
 }
 
+function packsCard() {
+  const on = myPacks();
+  return `<div class="card"><div class="card-h"><h2>📋 Template packs</h2></div><p class="muted" style="margin:0 0 10px;font-size:14px">Extra ready-made templates for specific kinds of work. Only you see the packs you switch on.</p>
+    ${TP.PACKS.map(pk => `<label class="tog" style="margin:6px 0"><input type="checkbox" data-pack="${pk.key}" ${on.includes(pk.key) ? "checked" : ""}> <span><b>${esc(pk.name)}</b><br><span class="muted">${esc(pk.blurb)}</span></span></label>`).join("")}</div>`;
+}
 /* ================= Morning email ================= */
 function digestCard() {
   if (S.mode !== "cloud") return "";

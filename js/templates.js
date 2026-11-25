@@ -4,6 +4,8 @@
 import { addDays, dkey, parseKey, isWorkday, nextRepeat } from "./engine.js";
 
 export const CATS = ["Work", "Personal", "HR & people"];
+// optional packs: hidden unless the person switches them on in Settings
+export const PACKS = [{ key: "hr", name: "HR & people", blurb: "Onboarding, people leaving, payroll and visa / permit renewals." }];
 export const BUILT_IN = [
   // ---------- Work ----------
   {
@@ -67,7 +69,7 @@ export const BUILT_IN = [
   },
   // ---------- HR & people ----------
   {
-    key: "onboard", cat: "HR & people", icon: "👋", name: "New team member", anchor: "Joining date", unit: "wd",
+    key: "onboard", cat: "HR & people", pack: "hr", icon: "👋", name: "New team member", anchor: "Joining date", unit: "wd",
     title: "Onboarding: {name}", nameLabel: "Person's name", priority: "High",
     blurb: "Paperwork, accounts, equipment and first-month check-ins.",
     steps: [
@@ -77,7 +79,7 @@ export const BUILT_IN = [
     ]
   },
   {
-    key: "exit", cat: "HR & people", icon: "🚪", name: "Team member leaving", anchor: "Last working day", unit: "wd",
+    key: "exit", cat: "HR & people", pack: "hr", icon: "🚪", name: "Team member leaving", anchor: "Last working day", unit: "wd",
     title: "Exit: {name}", nameLabel: "Person's name", priority: "High",
     blurb: "Handover, final pay, clearance and paperwork.",
     steps: [
@@ -87,7 +89,7 @@ export const BUILT_IN = [
     ]
   },
   {
-    key: "payroll", cat: "HR & people", icon: "💰", name: "Monthly payroll", anchor: "Salary date", rule: "monthly:lastwd", unit: "wd", repeat: true,
+    key: "payroll", cat: "HR & people", pack: "hr", icon: "💰", name: "Monthly payroll", anchor: "Salary date", rule: "monthly:lastwd", unit: "wd", repeat: true,
     title: "Payroll {month}", priority: "High",
     blurb: "Inputs to payslips, timed back from salary day.",
     steps: [
@@ -97,7 +99,7 @@ export const BUILT_IN = [
     ]
   },
   {
-    key: "visa", cat: "HR & people", icon: "🛂", name: "Visa / permit renewal", anchor: "Expiry date", unit: "d",
+    key: "visa", cat: "HR & people", pack: "hr", icon: "🛂", name: "Visa / permit renewal", anchor: "Expiry date", unit: "d",
     title: "Renewal: {name}", nameLabel: "Person's name", priority: "Medium",
     blurb: "Starts 30 days before expiry so nothing runs late.",
     steps: [[-30, "Tell the person and collect documents"], [-25, "Renew contract / work permit"], [-20, "Book medical test if needed"], [-15, "Submit the renewal"], [-10, "Biometrics / ID appointment"], [-5, "Update records and expiry dates"]]

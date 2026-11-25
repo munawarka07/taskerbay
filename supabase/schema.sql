@@ -769,3 +769,4 @@ alter table public.profiles add column if not exists activation_sent_at timestam
 -- v16: tasks.repeat accepts rules: yearly, every:Nd|Nw|Nm, weekly:0-6 list, monthly:1-31|last|lastwd|firstwd.
 -- v17: public.task_templates (user_id, name, data jsonb) for saved templates; built-in ones live in js/templates.js.
 -- v18: is_approved() requires aal2 for people with a verified TOTP factor; public.admin_mfa_reset(target).
+-- v20: profiles.template_packs text[] (optional template packs, e.g. 'hr', switched on per person in Settings).
