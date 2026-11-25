@@ -39,6 +39,10 @@ function whichAlert(t: { remind_before: number; reminded_at: string | null; due_
 }
 const fmt = (t: string) => { const [h, m] = t.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; };
 
+// people whose trial has ended (or who aren't approved) get no popups until access is given again
+const canUse = (p: { approved?: boolean; is_admin?: boolean; access_until?: string | null } | null) => !!p?.approved && (!!p.is_admin || !p.access_until || new Date(p.access_until) > new Date());
+async function activeUser(uid: string) { const { data } = await db.from("profiles").select("approved, is_admin, access_until").eq("id", uid).maybeSingle(); return canUse(data); }
+
 async function sendTo(subs: Sub[], msg: Msg) {
   let ok = 0;
   for (const s of subs) {
@@ -79,6 +83,7 @@ Deno.serve(async (req) => {
   if (reqBody.notification_id) {
     const { data: n } = await db.from("notifications").select("id, user_id, body, task_id, workspace_id, read, pushed_at").eq("id", reqBody.notification_id).maybeSingle();
     if (!n || n.read || n.pushed_at) return json({ skipped: true });
+    if (!(await activeUser(n.user_id))) return json({ skipped: "no access" });
     const { data: subs } = await db.from("push_subscriptions").select("*").eq("user_id", n.user_id);
     if (!subs?.length) return json({ devices: 0 });
     // claim it first so the every-minute run can't send it a second time
@@ -97,6 +102,7 @@ Deno.serve(async (req) => {
     const { data: p } = await db.from("profiles").select("timezone").eq("id", uid).maybeSingle();
     const now = localNow(p?.timezone || "Asia/Dubai"), left = minsUntil(now, t.due_date, t.due_time);
     const kind = whichAlert(t, left); if (!kind) return json({ later: true });
+    if (!(await activeUser(uid))) return json({ skipped: "no access" });
     const { data: subs } = await db.from("push_subscriptions").select("*").eq("user_id", uid);
     if (!subs?.length) return json({ devices: 0 });
     const col = kind === "due" ? "due_alerted_at" : "reminded_at";
@@ -112,7 +118,8 @@ Deno.serve(async (req) => {
   const byUser = new Map<string, Sub[]>();
   subs.forEach(s => byUser.set(s.user_id, [...(byUser.get(s.user_id) || []), s]));
   const users = [...byUser.keys()];
-  const { data: profiles } = await db.from("profiles").select("id, full_name, timezone, last_digest_on").in("id", users);
+  const { data: allProfiles } = await db.from("profiles").select("id, full_name, timezone, last_digest_on, approved, is_admin, access_until").in("id", users);
+  const profiles = (allProfiles || []).filter(canUse);
   const stats = { digests: 0, tasks: 0, routines: 0, inbox: 0 };
 
   for (const p of profiles || []) {
