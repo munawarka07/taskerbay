@@ -185,6 +185,7 @@ const cloud = {
   async myAccess() { const c = await sbClient(); const { data, error } = await c.from("profiles").select("approved, is_admin, full_name, access_until").eq("id", S.user.id).maybeSingle(); if (error) throw error; return data || { approved: false, is_admin: false }; },
   async accessRequests() { return this.rpc("access_requests"); },
   async setAccess(target, allow, days = null) { return this.rpc("set_access", { target, allow, days }); },
+  async setEmail(target, email) { return this.rpc("admin_set_email", { target, new_email: email }); },
   async testPush() { const c = await sbClient(); const { data, error } = await c.functions.invoke("push", { body: { test: true } }); if (error) throw error; return data; }
 };
 

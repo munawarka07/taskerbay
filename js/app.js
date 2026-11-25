@@ -1933,6 +1933,16 @@ document.addEventListener("click", async e => {
     case "old-done": { a.disabled = true; a.textContent = "Loading…"; try { const n = await api.loadOldDone(S.wsId); U.oldDone = S.wsId; toast(n ? `Loaded ${n} older finished task${n > 1 ? "s" : ""}.` : "No older finished tasks."); } catch (e) { toast(e.message); } render(); break; }
     case "keep-spell": { const inp = a.closest(".qa-hint")?.previousElementSibling?.querySelector?.("input") || $("[data-quick]"); const v = inp?.value || ""; const sp = SP.fix(v); SP.learn(sp.changes.map(c => c.from)); U.keepSpell = v; const h = $(`[data-hint-for="${inp?.id}"]`); if (h) h.innerHTML = hintFor(v); toast("OK, I'll keep your spelling for those words from now on."); break; }
     case "push-on": await enablePush(); break;
+    case "acc-email": {
+      const x = (U.access || []).find(r => r.id === id); if (!x) break;
+      U.sheet = { type: "acc-email" };
+      openSheet(`<h2 id="sheet-title">Change email</h2><form data-form="acc-email" data-id="${x.id}">
+        <p class="muted" style="margin:-4px 0 12px">${esc(x.full_name || "This person")} signs in with <b>${esc(x.email || "")}</b>. After the change they use the new email with their same password. Their tasks and access stay the same.</p>
+        <div class="field"><label for="ae-mail">New email</label><input class="inp" id="ae-mail" type="email" required autocomplete="off" value="${esc(x.email || "")}"></div>
+        <div class="sheet-actions"><button class="btn" type="submit">Save new email</button></div></form>`);
+      setTimeout(() => { const i = $("#ae-mail"); i?.focus(); i?.select(); }, 50);
+      break;
+    }
     case "acc-grant": { const x = (U.access || []).find(r => r.id === id), days = a.dataset.days ? +a.dataset.days : null; try { await api.setAccess(id, true, days); toast(days ? `${x?.full_name || "They"} can use TaskerBay for ${days} days.` : `${x?.full_name || "They"} now have permanent access.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-approve": { const x = (U.access || []).find(r => r.id === id); try { await api.setAccess(id, true); toast(`${x?.full_name || "They"} can now use TaskerBay.`); } catch (e) { toast(e.message); } U.access = null; render(); break; }
     case "acc-remove": { const x = (U.access || []).find(r => r.id === id); if (U.confirmRm !== id) { U.confirmRm = id; toast(`Tap again to remove ${x?.full_name || "this account"} and all their data.`); setTimeout(() => { if (U.confirmRm === id) U.confirmRm = null; }, 4000); break; } U.confirmRm = null; try { await api.setAccess(id, false); toast("Account removed."); } catch (e) { toast(e.message); } U.access = null; render(); break; }
@@ -2017,6 +2027,12 @@ document.addEventListener("keydown", async e => {
 document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind?.startsWith("fd-")) { await fundSubmit(kind, f, e); return; }
+  if (kind === "acc-email") {
+    const mail = $("#ae-mail").value.trim(), btn = f.querySelector("[type=submit]"); btn.disabled = true;
+    try { await api.setEmail(f.dataset.id, mail); closeSheet(); toast(`Email changed to ${mail.toLowerCase()}. They'll sign in with it from now on.`); U.access = null; render(); }
+    catch (err) { btn.disabled = false; toast(err.message || "Couldn't change the email."); }
+    return;
+  }
   if (kind === "chat") { await sendChat(f.dataset.task || null, $("textarea", f)); return; }
   if (kind === "quick") {
     const inp = $("input", f), typed = inp.value, h = $(`[data-hint-for="${inp.id}"]`);
@@ -2417,7 +2433,7 @@ function accessCard() {
   const now = new Date(), expired = x => x.approved && !x.is_admin && x.access_until && new Date(x.access_until) <= now;
   const pend = list.filter(x => !x.approved), ended = list.filter(expired), ok = list.filter(x => x.approved && !expired(x));
   const trialRow = (x, isEnded) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${isEnded ? `<span class="flag">trial ended ${esc(fmtWhen(x.access_until))}</span>` : x.access_until ? `trial until ${esc(fmtWhen(x.access_until))}` : x.is_admin ? "admin" : "permanent"}</small></div>
-    <div class="acc-btns">${x.is_admin ? "" : `${x.access_until ? `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">${isEnded ? "Give 1 more week" : "+1 week"}</button><button class="btn ghost" data-action="acc-grant" data-id="${x.id}">Make permanent</button>` : `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">Change to 1-week trial</button>`}<button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div></div>`;
+    <div class="acc-btns"><button class="btn ghost" data-action="acc-email" data-id="${x.id}">Change email</button>${x.is_admin ? "" : `${x.access_until ? `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">${isEnded ? "Give 1 more week" : "+1 week"}</button><button class="btn ghost" data-action="acc-grant" data-id="${x.id}">Make permanent</button>` : `<button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">Change to 1-week trial</button>`}<button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Remove</button>`}</div></div>`;
   const row = (x, pending) => `<div class="acc-row"><div>${avatarText(x.full_name || x.email)}</div><div class="who"><b>${esc(x.full_name || "(no name)")}</b><small>${esc(x.email || "")} · ${pending ? "asked " + timeAgo(x.created_at) : x.is_admin ? "admin" : "approved"}</small></div><div class="acc-btns"><button class="btn" data-action="acc-grant" data-id="${x.id}">Permanent</button><button class="btn ghost" data-action="acc-grant" data-days="7" data-id="${x.id}">1-week trial</button><button class="btn ghost danger-t" data-action="acc-remove" data-id="${x.id}">Reject</button></div></div>`;
   return `<div class="card"><div class="card-h"><h2>👤 Access requests</h2>${pend.length ? `<span class="badge-n">${pend.length}</span>` : ""}</div>
     ${U.access === "loading" ? `<p class="muted" style="margin:0">Loading…</p>` : U.access?.error ? `<p class="muted" style="margin:0">${esc(U.access.error)}</p>` : `

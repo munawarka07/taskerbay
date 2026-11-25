@@ -750,3 +750,7 @@ select cron.schedule('taskerbay-trials', '*/10 * * * *', 'select private.trial_c
 
 -- v11: no confirmation email step (access code + owner approval decide who gets in)
 -- private.require_signup_code() now also sets: new.email_confirmed_at := coalesce(new.email_confirmed_at, now());
+
+-- v12: admin can change a person's sign-in email (Settings -> Access requests -> Change email)
+-- public.admin_set_email(target uuid, new_email text): admin only; validates format and uniqueness;
+-- updates auth.users.email, the email identity, profiles.email, and tells the person in their Inbox.
