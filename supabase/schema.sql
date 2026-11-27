@@ -770,3 +770,6 @@ alter table public.profiles add column if not exists activation_sent_at timestam
 -- v17: public.task_templates (user_id, name, data jsonb) for saved templates; built-in ones live in js/templates.js.
 -- v18: is_approved() requires aal2 for people with a verified TOTP factor; public.admin_mfa_reset(target).
 -- v20: profiles.template_packs text[] (optional template packs, e.g. 'hr', switched on per person in Settings).
+-- v19: approvals (requester / approver, guard + notify triggers), audit_log (task, approval, fund, member, account triggers; 400-day trim cron),
+--      tasks.chased_at / chase_count for automatic follow-up emails (mail function, weekdays 9-18 Dubai, up to 3, tasks overdue <= 14 days),
+--      public.admin_overview() for the Admin page.

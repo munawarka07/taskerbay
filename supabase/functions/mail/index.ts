@@ -3,7 +3,8 @@
 //  { action: "activation" }          the person themself: send their activation link again
 //  { action: "welcome" }             the person themself, right after activating: the welcome email (once)
 //  { action: "digest" }              the person themself: send today's digest now (test)
-//  { action: "digest-run" } + x-cron-secret   every 15 min: morning digests that are due
+//  { action: "digest-run" } + x-cron-secret   every 15 min: morning digests that are due, and follow-ups on overdue delegated tasks
+//  { action: "nudge", task }          a workspace member reminds the task's owner by email now
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -129,6 +130,50 @@ async function runDigests() {
   return { sent };
 }
 
+// ---------- Follow-ups on delegated tasks ----------
+const canUse = (p: any) => p && p.approved && (p.is_admin || (p.activated_at && (!p.access_until || new Date(p.access_until) > new Date())));
+async function chaseOne(t: any, fromId: string | null, manual: boolean) {
+  const { data: who } = await db.from("profiles").select("id, full_name, approved, is_admin, activated_at, access_until").in("id", [t.assignee_id, fromId || t.created_by]);
+  const owner = (who || []).find((p: any) => p.id === t.assignee_id), from = (who || []).find((p: any) => p.id === (fromId || t.created_by));
+  if (!canUse(owner)) return { skipped: "owner has no access" };
+  const { data: u } = await db.auth.admin.getUserById(t.assignee_id); const email = u?.user?.email; if (!email) return { skipped: "no email" };
+  const first = (owner.full_name || "").split(" ")[0] || "there", fromName = from?.full_name || "Your team";
+  const due = t.due_date ? fmtD(t.due_date) + (t.due_time ? " " + fmtT(t.due_time) : "") : "";
+  const url = `${SITE}#task=${t.id}&ws=${t.workspace_id}`;
+  const lead = manual ? `${esc(fromName)} sent you a reminder about this task.` : `This task assigned by ${esc(fromName)} is overdue.`;
+  await send(email, `${manual ? "Reminder" : "Overdue"}: ${t.title}`,
+    layout(`⏰ ${esc(t.title)}`, `<p>Hi ${esc(first)},</p><p>${lead}</p><p style="background:#f4f6f7;border-radius:10px;padding:12px 14px"><b>${esc(t.title)}</b>${due ? `<br><span style="color:#c0392b">Due ${esc(due)}</span>` : ""}${t.status_note ? `<br><span style="color:#5f6b76">Last update: ${esc(t.status_note)}</span>` : ""}</p><p>Please update it or mark it done in TaskerBay.</p>${button(url, "Open the task")}`),
+    `Hi ${first},\n\n${manual ? `${fromName} sent you a reminder about this task.` : `This task assigned by ${fromName} is overdue.`}\n\n${t.title}${due ? `\nDue ${due}` : ""}\n\nOpen it: ${url}\n\nTaskerBay`);
+  await db.from("tasks").update({ chased_at: new Date().toISOString(), chase_count: (t.chase_count || 0) + 1 }).eq("id", t.id);
+  await db.from("notifications").insert({ user_id: t.assignee_id, workspace_id: t.workspace_id, task_id: t.id, actor_id: fromId || t.created_by, body: `⏰ ${manual ? `${fromName} reminded you` : "Overdue"}: “${t.title}”` });
+  return { sent: true, email };
+}
+async function runChases() {
+  const n = localNow("Asia/Dubai");
+  if (n.hour < 9 || n.hour >= 18 || n.dow === "Sat" || n.dow === "Sun") return { chased: 0 };
+  const dayAgo = new Date(Date.now() - 22 * 36e5).toISOString();
+  const twoWeeks = new Date(Date.parse(n.date + "T00:00:00Z") - 14 * 864e5).toISOString().slice(0, 10); // older ones were already chased or are stale
+  const { data: rows } = await db.from("tasks").select("id, title, due_date, due_time, assignee_id, created_by, workspace_id, chase_count, chased_at, status_note")
+    .is("completed_at", null).not("assignee_id", "is", null).not("created_by", "is", null).lt("due_date", n.date).gte("due_date", twoWeeks).lt("chase_count", 3)
+    .or(`chased_at.is.null,chased_at.lt.${dayAgo}`).limit(100);
+  let chased = 0;
+  for (const t of (rows || []) as any[]) {
+    if (t.assignee_id === t.created_by) continue;
+    try { const r: any = await chaseOne(t, null, false); if (r.sent) chased++; else await db.from("tasks").update({ chased_at: new Date().toISOString() }).eq("id", t.id); } catch (e) { console.error("chase", t.id, (e as Error).message); }
+  }
+  return { chased };
+}
+async function nudge(uid: string, taskId: string) {
+  const { data: t } = await db.from("tasks").select("id, title, due_date, due_time, assignee_id, created_by, workspace_id, chase_count, chased_at, status_note, completed_at").eq("id", taskId).maybeSingle();
+  if (!t) throw new Error("Task not found.");
+  const { data: mem } = await db.from("workspace_members").select("user_id").eq("workspace_id", t.workspace_id).eq("user_id", uid).maybeSingle();
+  if (!mem) throw new Error("You're not in this workspace.");
+  if (!t.assignee_id || t.assignee_id === uid) throw new Error("This task isn't assigned to someone else.");
+  if (t.completed_at) throw new Error("This task is already done.");
+  if (t.chased_at && Date.now() - new Date(t.chased_at).getTime() < 60 * 60e3) throw new Error("A reminder was sent less than an hour ago.");
+  return await chaseOne(t, uid, true);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   try {
@@ -136,7 +181,8 @@ Deno.serve(async (req) => {
     if (body0.action === "digest-run") {
       const { data: cfg } = await db.rpc("push_config");
       if (!cfg || req.headers.get("x-cron-secret") !== cfg.cron) return json({ error: "forbidden" }, 403);
-      return json(await runDigests());
+      const d = await runDigests(); const c = await runChases().catch(e => ({ chaseError: (e as Error).message }));
+      return json({ ...d, ...c });
     }
     const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     const { data: u } = await db.auth.getUser(token);
@@ -151,6 +197,7 @@ Deno.serve(async (req) => {
       return json(await sendActivation(u.user.id));
     }
     if (body.action === "digest") return json(await sendDigest(u.user.id, true));
+    if (body.action === "nudge") return json(await nudge(u.user.id, String(body.target || "")));
     if (body.action === "welcome") return json(await sendWelcome(u.user.id));
     return json({ error: "Unknown action" }, 400);
   } catch (e) { return json({ error: (e as Error).message }, 400); }

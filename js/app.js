@@ -396,7 +396,7 @@ function renderChrome() {
 }
 
 /* ================= Routing & render ================= */
-const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, funds: vFunds, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
+const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, funds: vFunds, approvals: vApprovals, report: vReport, activity: vActivity, admin: vAdmin, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
 function render(animate = false) {
   if (!S.ready) return;
   renderChrome();
@@ -410,7 +410,9 @@ function render(animate = false) {
 }
 function go(view, opts = {}) {
   if (!VIEWS[view]) view = "today";
-  if (view === "settings") { U.access = null; U.cal = undefined; U.mfa = undefined; } // always show fresh access requests and calendar status
+  if (view === "settings") { U.access = null; U.cal = undefined; U.mfa = undefined; }
+  if (view === "activity") U.act = null;
+  if (view === "admin") U.adm = undefined; // always show fresh access requests and calendar status
   U.view = view; Object.assign(U, opts);
   if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
   render(true); scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
@@ -761,7 +763,7 @@ function refreshTaskSheet(first) {
       </div>
     </div>
     ${isTeam() ? `<div class="card" style="padding:14px;box-shadow:none;margin-top:12px"><div class="card-h" style="margin-bottom:6px"><h2>💬 Chat</h2><span class="sub">${S.db.workspace_members.length} people in ${esc(ws()?.name || "this workspace")}</span></div>${chatPanel(t.id, "chat-in-task")}</div>` : ""}
-    <div class="sheet-actions" style="margin-top:14px"><button class="btn danger" data-action="delete-task" data-id="${t.id}">Delete</button>${!E.isDone(t) ? `<button class="btn ghost" data-action="focus-task" data-id="${t.id}">⏱ Focus</button>` : ""}${E.childrenOf(t.id).length ? `<button class="btn ghost" data-action="tpl-save" data-id="${t.id}">📋 Save as template</button>` : ""}<button class="btn" data-action="close-sheet">Done</button></div>
+    <div class="sheet-actions" style="margin-top:14px"><button class="btn danger" data-action="delete-task" data-id="${t.id}">Delete</button>${!E.isDone(t) ? `<button class="btn ghost" data-action="focus-task" data-id="${t.id}">⏱ Focus</button>` : ""}${E.childrenOf(t.id).length ? `<button class="btn ghost" data-action="tpl-save" data-id="${t.id}">📋 Save as template</button>` : ""}${!E.isDone(t) && isTeam() ? `<button class="btn ghost" data-action="ap-new" data-task="${t.id}">✅ Ask for approval</button>` : ""}${!E.isDone(t) && t.assignee_id && t.assignee_id !== me() && S.mode === "cloud" ? `<button class="btn ghost" data-action="nudge" data-id="${t.id}">⏰ Remind ${esc(nameOf(t.assignee_id).split(" ")[0])}</button>` : ""}<button class="btn" data-action="close-sheet">Done</button></div>
     <p class="muted" style="font-size:11.5px;text-align:center;margin:10px 0 0">Created ${timeAgo(t.created_at)} by ${esc(nameOf(t.created_by))}${t.completed_at ? ` · finished ${timeAgo(t.completed_at)}` : ""}</p>`;
   Object.entries(keep).forEach(([id, v]) => { const n = $("#" + id); if (n && v !== undefined && document.activeElement !== n) n.value = v; });
   Object.entries(sub).forEach(([id, v]) => { const n = $(`[data-sub-input="${id}"]`); if (n) n.value = v; });
@@ -1419,7 +1421,7 @@ function vInbox() {
   <div class="list">${list.map(n => `<div class="notif ${n.read ? "" : "unread"}" data-action="notif" data-id="${n.id}">${avatar(n.actor_id, true)}<div><p>${esc(n.body)}</p><small>${timeAgo(n.created_at)}${n.workspace_id && n.workspace_id !== S.wsId ? ` · ${esc(S.db.workspaces.find(w => w.id === n.workspace_id)?.name || "")}` : ""}</small></div></div>`).join("") || emptyBox("All quiet", "Assignments, status changes and updates from your team appear here.", I.bell)}</div>`;
 }
 function vMore() {
-  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending, budgets & funds"], ["funds", "🤝", "Funds", fundsWaiting() ? `${fundsWaiting()} waiting for you` : "Event & project budgets"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["settings", "⚙️", "Settings", "Profile, theme, install"]];
+  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending, budgets & funds"], ["funds", "🤝", "Funds", fundsWaiting() ? `${fundsWaiting()} waiting for you` : "Event & project budgets"], ["approvals", "✅", "Approvals", apprWaiting() ? `${apprWaiting()} waiting for you` : "Ask, approve, keep a record"], ["report", "📈", "Weekly report", "What got done, what slipped · PDF"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["activity", "🧾", "Activity log", "Who changed what, and when"], ["settings", "⚙️", "Settings", "Profile, theme, install"], ...(U.isAdmin ? [["admin", "🛡️", "Admin", "Users, sign-ins, trials"]] : [])];
   return `<div class="view-h"><div><h1>More</h1><p>Everything else in TaskerBay</p></div></div><div class="hub">${H.map(([k, i, l, s]) => `<button data-go="${k}"><span class="ic">${i}</span><b>${l}</b><small>${s}</small></button>`).join("")}</div>`;
 }
 function vSettings() {
@@ -1849,6 +1851,13 @@ document.addEventListener("click", async e => {
   if (act.startsWith("dg-")) { await digestAction(act, a); return; }
   if (act === "voice") { voiceStart(a); return; }
   if (act.startsWith("mfa-")) { await mfaAction(act, a); return; }
+  if (act.startsWith("ap-")) { await apAction(act, a); return; }
+  if (act === "nudge") { a.disabled = true; try { const r = await api.mail("nudge", a.dataset.id); toast(r?.sent ? `Reminder emailed to ${r.email}.` : "They can't be emailed right now."); } catch (e) { toast(e.message); } a.disabled = false; return; }
+  if (act === "rep-off") { U.repOff = +a.dataset.v; render(); return; }
+  if (act === "rep-pdf") { a.disabled = true; try { await reportPdf(); } catch (e) { toast("Couldn't make the PDF: " + (e.message || e)); } a.disabled = false; return; }
+  if (act === "act-kind") { U.actKind = a.dataset.v; render(); return; }
+  if (act === "act-more") { a.disabled = true; try { await actMore(); } catch (e) { toast(e.message); a.disabled = false; } return; }
+  if (act === "adm-refresh") { U.adm = undefined; render(); return; }
   if (act === "tpl-open") { closeSheet(); setTimeout(() => templateSheet(), 10); return; }
   if (act === "tpl-pick") { templateSheet(a.dataset.k); return; }
   if (act === "tpl-save") { await tplSave(a.dataset.id); return; }
@@ -1923,7 +1932,7 @@ document.addEventListener("click", async e => {
     case "auto-del": { const r = S.db.automations.find(x => x.id === U.sheet.a.id); closeSheet(); if (r) { await remove("automations", r); toast("Rule deleted.", () => insert("automations", r)); } break; }
     case "au-add": readAutoForm(); U.sheet.a.actions.push({ type: "set_priority", value: "High" }); reopenAuto(); break;
     case "au-del": readAutoForm(); U.sheet.a.actions.splice(+a.dataset.i, 1); reopenAuto(); break;
-    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); else if (/^New sign-up request/.test(n?.body || "")) go("settings"); else if (/^💬/.test(n?.body || "")) go("chat"); else if (/^💰/.test(n?.body || "")) { U.fundId = null; go("funds"); } break; }
+    case "notif": { const n = S.db.notifications.find(x => x.id === id); if (n && !n.read) update("notifications", n, { read: true }); if (n?.workspace_id && n.workspace_id !== S.wsId) await switchWs(n.workspace_id); if (n?.task_id && task(n.task_id)) openTask(n.task_id); else if (/^New sign-up request/.test(n?.body || "")) go("settings"); else if (/^💬/.test(n?.body || "")) go("chat"); else if (/^💰/.test(n?.body || "")) { U.fundId = null; go("funds"); } else if (/^📝/.test(n?.body || "")) go("approvals"); break; }
     case "read-all": for (const n of S.db.notifications.filter(n => !n.read)) update("notifications", n, { read: true }); break;
     case "palette": openPalette(); break;
     case "theme": cycleTheme(); render(); break;
@@ -2061,6 +2070,9 @@ document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind?.startsWith("fd-")) { await fundSubmit(kind, f, e); return; }
   if (kind === "tpl") { await tplCreate(f); return; }
+  if (kind === "ap-new") { await apSubmit(f); return; }
+  if (kind === "ap-decide") { const row = (S.db.approvals || []).find(x => x.id === f.dataset.id); if (!row) return; const ok = f.dataset.ok === "1", b = f.querySelector("[type=submit]"); b.disabled = true;
+    try { await update("approvals", row, { status: ok ? "approved" : "rejected", decision_note: $("#ap-note").value.trim() }); closeSheet(); toast(ok ? "Approved." : "Rejected."); } catch (err) { b.disabled = false; toast(err.message); } return; }
   if (kind === "mfa-verify") { const b = f.querySelector("[type=submit]"); b.disabled = true; try { await api.mfaVerify(U.mfaEnroll.id, $("#mfa-new").value); U.mfaEnroll = null; U.mfa = undefined; toast("2-step sign-in is on. You'll need a code next time you sign in."); render(); } catch (err) { b.disabled = false; toast(err.message); } return; }
   if (kind === "acc-email") {
     const mail = $("#ae-mail").value.trim(), btn = f.querySelector("[type=submit]"); btn.disabled = true;
@@ -2569,6 +2581,182 @@ function packsCard() {
   return `<div class="card"><div class="card-h"><h2>📋 Template packs</h2></div><p class="muted" style="margin:0 0 10px;font-size:14px">Extra ready-made templates for specific kinds of work. Only you see the packs you switch on.</p>
     ${TP.PACKS.map(pk => `<label class="tog" style="margin:6px 0"><input type="checkbox" data-pack="${pk.key}" ${on.includes(pk.key) ? "checked" : ""}> <span><b>${esc(pk.name)}</b><br><span class="muted">${esc(pk.blurb)}</span></span></label>`).join("")}</div>`;
 }
+/* ================= Approvals ================= */
+const KINDS = [["Sign-off", "✍️"], ["Leave", "🌴"], ["Expense", "💳"], ["Purchase", "🛒"], ["Document", "📄"], ["Other", "📌"]];
+const kindIc = k => (KINDS.find(x => x[0] === k) || KINDS[5])[1];
+const apprWaiting = () => (S.db.approvals || []).filter(a => a.approver_id === me() && a.status === "pending").length;
+function apRow(a) {
+  const mine = a.requested_by === me(), forMe = a.approver_id === me() && a.status === "pending";
+  const st = { pending: ["Waiting", "warn"], approved: ["Approved", "ok"], rejected: ["Rejected", "bad"], cancelled: ["Cancelled", ""] }[a.status];
+  const other = mine ? `to ${esc(nameOf(a.approver_id))}` : `from ${esc(nameOf(a.requested_by))}`;
+  return `<div class="ap-card ${a.status}">
+    <div class="ap-top"><span class="ap-ic">${kindIc(a.kind)}</span><div class="ap-main"><b>${esc(a.title)}</b><small>${esc(a.kind)} · ${other} · ${timeAgo(a.created_at)}${a.needed_by ? ` · needed by ${esc(dueLabel({ due_date: a.needed_by }))}` : ""}${a.amount != null ? ` · ${esc(String(a.amount))}` : ""}</small></div><span class="chip ${st[1]}">${st[0]}</span></div>
+    ${a.details ? `<p class="ap-det">${esc(a.details)}</p>` : ""}
+    ${a.task_id && task(a.task_id) ? `<button class="link" data-action="open-task" data-id="${a.task_id}">↳ ${esc(task(a.task_id).title)}</button>` : ""}
+    ${a.decided_at ? `<p class="ap-dec">${a.status === "approved" ? "✅" : "❌"} ${esc(nameOf(a.approver_id))}, ${esc(fmtWhen(a.decided_at))}${a.decision_note ? `: “${esc(a.decision_note)}”` : ""}</p>` : ""}
+    ${forMe ? `<div class="ap-btns"><button class="btn ghost danger-t" data-action="ap-reject" data-id="${a.id}">Reject</button><button class="btn" data-action="ap-approve" data-id="${a.id}">Approve</button></div>` : ""}
+    ${mine && a.status === "pending" ? `<div class="ap-btns"><button class="btn ghost" data-action="ap-cancel" data-id="${a.id}">Cancel request</button></div>` : ""}
+  </div>`;
+}
+function vApprovals() {
+  const all = S.db.approvals || [], tab = U.apTab || (apprWaiting() ? "me" : "mine");
+  const lists = { me: all.filter(a => a.approver_id === me() && a.status === "pending"), mine: all.filter(a => a.requested_by === me() && a.status === "pending"), done: all.filter(a => a.status !== "pending") };
+  const L = lists[tab] || [];
+  return `<div class="view-h"><div><h1>Approvals</h1><p>Ask for a yes, give one, and keep a record of who decided what.</p></div><button class="btn" data-action="ap-new">＋ New request</button></div>
+  <div class="seg" style="margin-bottom:14px">${[["me", `Waiting for me${lists.me.length ? ` (${lists.me.length})` : ""}`], ["mine", `My requests${lists.mine.length ? ` (${lists.mine.length})` : ""}`], ["done", "History"]].map(([k, l]) => `<button class="${tab === k ? "on" : ""}" data-action="ap-tab" data-v="${k}">${l}</button>`).join("")}</div>
+  ${L.length ? `<div class="ap-list">${L.map(apRow).join("")}</div>` : emptyBox(tab === "me" ? "Nothing to approve" : tab === "mine" ? "No open requests" : "No history yet", tab === "done" ? "Decided requests are kept here." : isTeam() ? "Tap ＋ New request to ask someone in this workspace." : "Approvals work in a shared workspace. Invite someone from Team & updates first.")}`;
+}
+function apSheet(taskId) {
+  const t = taskId ? task(taskId) : null;
+  const people = S.db.workspace_members.map(m => m.user_id).filter(u => u !== me());
+  if (!people.length) { toast("Invite someone to this workspace first. Approvals go to another person."); return; }
+  openSheet(`<h2 id="sheet-title">Ask for approval</h2>
+  <form data-form="ap-new" autocomplete="off" data-task="${t ? t.id : ""}">
+    <div class="field"><span class="lab">Type</span><div class="seg wrap" id="ap-kind">${KINDS.map(([k, i], n) => `<button type="button" class="${n === 0 ? "on" : ""}" data-action="ap-kind" data-v="${k}">${i} ${k}</button>`).join("")}</div></div>
+    <div class="field"><label for="ap-title">What needs approval</label><input class="inp" id="ap-title" required maxlength="300" value="${t ? esc(t.title) : ""}" placeholder="e.g. Annual leave 3–5 Dec"></div>
+    <div class="field"><label for="ap-det">Details <span class="muted">(optional)</span></label><textarea class="inp" id="ap-det" rows="3" maxlength="4000"></textarea></div>
+    <div class="grid g-2" style="gap:10px"><div class="field"><label for="ap-who">Approver</label><select class="inp" id="ap-who">${people.map(u => `<option value="${u}">${esc(nameOf(u))}</option>`).join("")}</select></div>
+    <div class="field"><label for="ap-by">Needed by <span class="muted">(optional)</span></label><input class="inp" type="date" id="ap-by" value="${t?.due_date || ""}"></div></div>
+    <div class="field"><label for="ap-amt">Amount <span class="muted">(optional)</span></label><input class="inp" id="ap-amt" inputmode="decimal" placeholder="e.g. 1250"></div>
+    <div class="sheet-actions"><button type="button" class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" type="submit">Send request</button></div>
+  </form>`);
+}
+async function apSubmit(f) {
+  const title = $("#ap-title").value.trim(); if (!title) return;
+  const amt = $("#ap-amt").value.replace(/[^\d.]/g, "");
+  const row = { id: uuid(), workspace_id: S.wsId, task_id: f.dataset.task || null, kind: $("#ap-kind .on")?.dataset.v || "Sign-off", title, details: $("#ap-det").value.trim(), amount: amt ? +amt : null, needed_by: $("#ap-by").value || null, requested_by: me(), approver_id: $("#ap-who").value, status: "pending", decision_note: "", created_at: new Date().toISOString() };
+  const b = f.querySelector("[type=submit]"); b.disabled = true;
+  try { await insert("approvals", row); if (row.task_id && task(row.task_id)) await E.postUpdate?.(task(row.task_id), `Asked ${nameOf(row.approver_id)} for approval.`, "system"); closeSheet(); U.apTab = "mine"; toast(`Sent to ${nameOf(row.approver_id)}.`); if (U.view !== "approvals") go("approvals"); else render(); }
+  catch (e) { b.disabled = false; toast(e.message); }
+}
+function apDecideSheet(id, ok) {
+  const a = (S.db.approvals || []).find(x => x.id === id); if (!a) return;
+  openSheet(`<h2 id="sheet-title">${ok ? "Approve" : "Reject"}: ${esc(a.title)}</h2>
+  <form data-form="ap-decide" data-id="${id}" data-ok="${ok ? 1 : 0}"><div class="field"><label for="ap-note">${ok ? "Note (optional)" : "Reason"}</label><textarea class="inp" id="ap-note" rows="3" maxlength="1000" ${ok ? "" : "required"} placeholder="${ok ? "e.g. Approved, enjoy the break" : "e.g. Please add the quotation"}"></textarea></div>
+  <div class="sheet-actions"><button type="button" class="btn ghost" data-action="close-sheet">Back</button><button class="btn ${ok ? "" : "danger"}" type="submit">${ok ? "Approve" : "Reject"}</button></div></form>`);
+}
+async function apAction(act, a) {
+  const row = (S.db.approvals || []).find(x => x.id === a.dataset.id);
+  switch (act) {
+    case "ap-tab": U.apTab = a.dataset.v; render(); return;
+    case "ap-new": closeSheet(); setTimeout(() => apSheet(a.dataset.task), 10); return;
+    case "ap-kind": a.parentElement.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === a)); return;
+    case "ap-approve": apDecideSheet(a.dataset.id, true); return;
+    case "ap-reject": apDecideSheet(a.dataset.id, false); return;
+    case "ap-cancel": if (row) { try { await update("approvals", row, { status: "cancelled" }); toast("Request cancelled."); } catch (e) { toast(e.message); } } return;
+  }
+}
+
+/* ================= Weekly report ================= */
+function weekData(offset = 0) {
+  const end = addDays(new Date(), -7 * offset), start = addDays(end, -6), sk = dkey(start), ek = dkey(end), nk = dkey(addDays(end, 7));
+  const inWs = S.db.tasks;
+  const doneIn = inWs.filter(t => t.completed_at && dkey(new Date(t.completed_at)) >= sk && dkey(new Date(t.completed_at)) <= ek);
+  const mineOnly = t => !isTeam() || t.assignee_id === me() || (!t.assignee_id && t.created_by === me());
+  const overdue = inWs.filter(t => !E.isDone(t) && t.due_date && t.due_date < dkey());
+  const late = doneIn.filter(t => t.due_date && dkey(new Date(t.completed_at)) > t.due_date);
+  const next = inWs.filter(t => !E.isDone(t) && t.due_date && t.due_date > ek && t.due_date <= nk).sort((a, b) => (a.due_date + (a.due_time || "")).localeCompare(b.due_date + (b.due_time || "")));
+  const focusMin = S.db.focus_sessions.filter(f => f.day >= sk && f.day <= ek).reduce((x, f) => x + (f.minutes || 0), 0);
+  const byArea = {}; doneIn.forEach(t => { byArea[t.area || "Other"] = (byArea[t.area || "Other"] || 0) + 1; });
+  const byPerson = {}; if (isTeam()) doneIn.forEach(t => { const u = t.assignee_id || t.created_by; byPerson[u] = (byPerson[u] || 0) + 1; });
+  const onTime = doneIn.filter(t => t.due_date).length ? Math.round(100 * (1 - late.length / doneIn.filter(t => t.due_date).length)) : null;
+  return { start, end, sk, ek, doneIn, overdue, late, next, focusMin, byArea, byPerson, onTime, mineOnly };
+}
+function vReport() {
+  const off = U.repOff || 0, d = weekData(off), f = x => x.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const list = (ts, empty, showDue) => ts.length ? `<div class="list">${ts.slice(0, 12).map(t => `<div class="rep-row" data-action="open-task" data-id="${t.id}"><span>${esc(t.title)}</span><small>${showDue ? esc(dueLabel(t)) : t.completed_at ? esc(new Date(t.completed_at).toLocaleDateString("en-GB", { weekday: "short", day: "numeric" })) : ""}${isTeam() ? ` · ${esc(nameOf(t.assignee_id || t.created_by).split(" ")[0])}` : ""}</small></div>`).join("")}${ts.length > 12 ? `<p class="muted" style="font-size:13px;margin:6px 2px 0">…and ${ts.length - 12} more in the PDF</p>` : ""}</div>` : `<p class="muted" style="margin:0">${empty}</p>`;
+  return `<div class="view-h"><div><h1>Weekly report</h1><p>${f(d.start)} – ${f(d.end)} · ${esc(ws()?.name || "")}</p></div><button class="btn" data-action="rep-pdf">⬇ PDF</button></div>
+  <div class="seg" style="margin-bottom:14px">${[[0, "Last 7 days"], [1, "Week before"], [2, "2 weeks before"]].map(([k, l]) => `<button class="${off === k ? "on" : ""}" data-action="rep-off" data-v="${k}">${l}</button>`).join("")}</div>
+  <div class="grid g-stats" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:14px">
+    <div class="card stat" style="--c:var(--green)"><div class="k"><i></i>Done</div><div class="v num">${d.doneIn.length}</div><div class="s">${d.onTime == null ? "tasks finished" : `${d.onTime}% on time`}</div></div>
+    <div class="card stat" style="--c:var(--red)"><div class="k"><i></i>Overdue now</div><div class="v num">${d.overdue.length}</div><div class="s">still open</div></div>
+    <div class="card stat" style="--c:var(--gold)"><div class="k"><i></i>Finished late</div><div class="v num">${d.late.length}</div><div class="s">after the due date</div></div>
+    <div class="card stat" style="--c:var(--accent)"><div class="k"><i></i>Focus time</div><div class="v num">${Math.floor(d.focusMin / 60)}h ${d.focusMin % 60}m</div><div class="s">in focus sessions</div></div>
+  </div>
+  <div class="grid g-2">
+    <div class="card"><div class="card-h"><h2>✅ Done</h2></div>${list(d.doneIn.sort((a, b) => a.completed_at.localeCompare(b.completed_at)), "Nothing finished in this week.")}</div>
+    <div class="grid" style="gap:14px;align-content:start">
+      <div class="card"><div class="card-h"><h2>⚠️ Overdue</h2></div>${list(d.overdue.sort((a, b) => a.due_date.localeCompare(b.due_date)), "Nothing overdue. 👏", true)}</div>
+      <div class="card"><div class="card-h"><h2>➡️ Coming up next week</h2></div>${list(d.next, "Nothing scheduled yet.", true)}</div>
+      ${Object.keys(d.byPerson).length ? `<div class="card"><div class="card-h"><h2>👥 Done by person</h2></div>${Object.entries(d.byPerson).sort((a, b) => b[1] - a[1]).map(([u, n]) => `<div class="rep-row"><span>${esc(nameOf(u))}</span><b>${n}</b></div>`).join("")}</div>` : ""}
+    </div>
+  </div>`;
+}
+async function savePdf(r, name, title) {
+  const blob = r.blob(), file = new File([blob], name, { type: "application/pdf" });
+  if (navigator.canShare?.({ files: [file] }) && matchMedia("(pointer:coarse)").matches) { try { await navigator.share({ files: [file], title }); return; } catch (e) { if (e?.name === "AbortError") return; } }
+  const url = URL.createObjectURL(blob), a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast("PDF downloaded.");
+}
+async function reportPdf() {
+  const { Report } = await import("./pdf.js");
+  const d = weekData(U.repOff || 0), f = x => x.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }), who = t => nameOf(t.assignee_id || t.created_by);
+  const r = new Report({ title: "Weekly report", subtitle: `${f(d.start)} – ${f(d.end)} · ${ws()?.name || ""} · ${nameOf(me())}`, footer: "TaskerBay · taskerbay.com" });
+  r.heading("Summary");
+  r.boxes([["Done", String(d.doneIn.length), [22, 140, 80]], ["On time", d.onTime == null ? "-" : d.onTime + "%"], ["Finished late", String(d.late.length), [170, 120, 0]], ["Overdue now", String(d.overdue.length), [200, 40, 40]], ["Due next week", String(d.next.length)], ["Focus time", `${Math.floor(d.focusMin / 60)}h ${d.focusMin % 60}m`]]);
+  const dt = k => k ? parseKey(k).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) : "-";
+  const cols = isTeam() ? [{ h: "Task", w: .5, bold: true }, { h: "Person", w: .2 }, { h: "Due", w: .15 }, { h: "Done", w: .15 }] : [{ h: "Task", w: .64, bold: true }, { h: "Due", w: .18 }, { h: "Done", w: .18 }];
+  const rowOf = t => isTeam() ? [t.title, who(t), dt(t.due_date), t.completed_at ? dt(dkey(new Date(t.completed_at))) : ""] : [t.title, dt(t.due_date), t.completed_at ? dt(dkey(new Date(t.completed_at))) : ""];
+  r.heading("Done this week");
+  if (d.doneIn.length) r.table(cols, d.doneIn.map(rowOf), { rowColor: (row, i) => d.late.includes(d.doneIn[i]) ? [170, 120, 0] : null }); else r.note("Nothing finished in this week.");
+  if (d.late.length) r.note("Rows in amber were finished after their due date.");
+  r.heading("Overdue (still open)");
+  if (d.overdue.length) r.table(cols, d.overdue.map(rowOf), { rowColor: () => [200, 40, 40] }); else r.note("Nothing overdue.");
+  r.heading("Coming up next week");
+  if (d.next.length) r.table(cols, d.next.map(rowOf)); else r.note("Nothing scheduled yet.");
+  if (Object.keys(d.byArea).length) { r.heading("Done by area"); r.table([{ h: "Area", w: .7, bold: true }, { h: "Tasks", w: .3, align: "right" }], Object.entries(d.byArea).sort((a, b) => b[1] - a[1]).map(([a, n]) => [a, String(n)])); }
+  if (Object.keys(d.byPerson).length) { r.heading("Done by person"); r.table([{ h: "Person", w: .7, bold: true }, { h: "Tasks", w: .3, align: "right" }], Object.entries(d.byPerson).sort((a, b) => b[1] - a[1]).map(([u, n]) => [nameOf(u), String(n)])); }
+  await savePdf(r, `weekly-report-${d.ek}.pdf`, "Weekly report");
+}
+
+/* ================= Activity log ================= */
+const ACT_KINDS = [["", "All"], ["task", "Tasks"], ["approval", "Approvals"], ["fund", "Money"], ["member", "Team"], ["account", "Accounts"]];
+function vActivity() {
+  if (S.mode !== "cloud") return `<div class="view-h"><div><h1>Activity log</h1><p>Who changed what, and when</p></div></div>${emptyBox("Recorded on the live site", "Every change to tasks, approvals, money and accounts is logged automatically once you use your own account.")}`;
+  const k = U.actKind || "";
+  if (!U.act || U.act.kind !== k) { U.act = { kind: k, rows: null, more: true }; api.auditLog({ kind: k || null }).then(rows => { if (U.act?.kind === k) { U.act.rows = rows; U.act.more = rows.length === 100; render(); } }, e => { U.act.rows = []; U.act.err = e.message; render(); }); }
+  const rows = U.act.rows, ic = { task: "✅", approval: "📝", fund: "💰", member: "👥", account: "🔑" };
+  let last = "";
+  return `<div class="view-h"><div><h1>Activity log</h1><p>Who changed what, and when. Kept for a year.</p></div></div>
+  <div class="seg wrap" style="margin-bottom:14px">${ACT_KINDS.map(([v, l]) => `<button class="${k === v ? "on" : ""}" data-action="act-kind" data-v="${v}">${l}</button>`).join("")}</div>
+  <div class="card">${!rows ? `<p class="muted" style="margin:0">Loading…</p>` : U.act.err ? `<p class="muted" style="margin:0">${esc(U.act.err)}</p>` : !rows.length ? `<p class="muted" style="margin:0">Nothing recorded yet.</p>` :
+    rows.map(r => { const day = new Date(r.at).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }); const h = day !== last ? `<div class="act-day">${day}</div>` : ""; last = day;
+      return `${h}<div class="act-row"><span class="act-ic">${ic[r.kind] || "•"}</span><div><p>${esc(r.summary)}</p><small>${esc(r.actor_id ? nameOf(r.actor_id) : "TaskerBay")} · ${new Date(r.at).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit" })}</small></div></div>`; }).join("")}
+  ${rows && U.act.more ? `<button class="btn ghost" data-action="act-more" style="margin-top:10px;width:100%">Show older</button>` : ""}</div>`;
+}
+async function actMore() {
+  const rows = U.act?.rows; if (!rows?.length) return;
+  const more = await api.auditLog({ kind: U.act.kind || null, before: rows[rows.length - 1].at }); U.act.rows = rows.concat(more); U.act.more = more.length === 100; render();
+}
+
+/* ================= Admin dashboard ================= */
+function vAdmin() {
+  if (!U.isAdmin) return emptyBox("Admins only", "");
+  if (U.adm === undefined) { U.adm = null; api.rpc("admin_overview").then(r => { U.adm = r || []; render(); }, e => { U.adm = { err: e.message }; render(); }); }
+  const A = U.adm;
+  if (!A) return `<div class="view-h"><div><h1>Admin</h1></div></div><p class="muted">Loading…</p>`;
+  if (A.err) return `<div class="view-h"><div><h1>Admin</h1></div></div><p class="muted">${esc(A.err)}</p>`;
+  const now = Date.now(), week = now - 7 * 864e5, soon = now + 3 * 864e5;
+  const active = A.filter(u => u.last_active && new Date(u.last_active) > week).length;
+  const trials = A.filter(u => u.access_until && new Date(u.access_until) > now);
+  const ending = trials.filter(u => new Date(u.access_until) < soon);
+  const waiting = A.filter(u => !u.approved);
+  const ago = t => t ? timeAgo(t) : "never";
+  return `<div class="view-h"><div><h1>Admin</h1><p>Everyone with a TaskerBay account</p></div><button class="btn ghost" data-action="adm-refresh">↻ Refresh</button></div>
+  <div class="grid g-stats" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:14px">
+    <div class="card stat" style="--c:var(--accent)"><div class="k"><i></i>People</div><div class="v num">${A.filter(u => u.approved).length}</div><div class="s">${waiting.length} waiting for approval</div></div>
+    <div class="card stat" style="--c:var(--green)"><div class="k"><i></i>Active this week</div><div class="v num">${active}</div><div class="s">signed in or made changes</div></div>
+    <div class="card stat" style="--c:var(--gold)"><div class="k"><i></i>On trial</div><div class="v num">${trials.length}</div><div class="s">${ending.length} ending in 3 days</div></div>
+    <div class="card stat" style="--c:var(--red)"><div class="k"><i></i>2-step sign-in</div><div class="v num">${A.filter(u => u.mfa).length}/${A.filter(u => u.approved).length}</div><div class="s">accounts protected</div></div>
+  </div>
+  <div class="card"><div class="card-h"><h2>People</h2><button class="link" data-go="settings">Manage access</button></div>
+  <div class="adm-list">${A.map(u => `<div class="adm-row">
+    <div class="adm-who"><b>${esc(u.full_name || u.email)}</b>${u.is_admin ? ` <span class="chip">Admin</span>` : ""}<small>${esc(u.email || "")}</small></div>
+    <div class="adm-tags">${!u.approved ? `<span class="chip warn">Waiting</span>` : !u.is_admin && !u.activated_at ? `<span class="chip warn">Not activated</span>` : u.access_until ? (new Date(u.access_until) > now ? `<span class="chip ${new Date(u.access_until) < soon ? "warn" : ""}">Trial to ${esc(fmtWhen(u.access_until))}</span>` : `<span class="chip bad">Trial ended</span>`) : `<span class="chip ok">Permanent</span>`}${u.mfa ? `<span class="chip ok">🔐 2-step</span>` : ""}${u.email_digest && u.email_digest !== "off" ? `<span class="chip">☀️ Email</span>` : ""}</div>
+    <div class="adm-nums"><span><b>${u.open_tasks}</b> open</span><span><b>${u.done_7d}</b> done 7d</span><span class="${u.overdue ? "red" : ""}"><b>${u.overdue}</b> overdue</span><span>Last seen ${esc(ago(u.last_active))}</span></div>
+  </div>`).join("")}</div></div>`;
+}
+
 /* ================= Morning email ================= */
 function digestCard() {
   if (S.mode !== "cloud") return "";

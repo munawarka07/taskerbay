@@ -7,13 +7,15 @@ export const PK = {
   routine_items: ["id"], routine_logs: ["item_id", "day"], journal: ["user_id", "day"], focus_sessions: ["id"],
   expenses: ["id"], budgets: ["user_id", "category"],
   chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"],
-  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"], task_templates: ["id"]
+  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"], task_templates: ["id"], approvals: ["id"]
 };
 const TABLES = Object.keys(PK);
 const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages"];
 const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads", "calendar_events", "task_templates"];
 // shared money funds: visible to the creator and the people added to them (the server decides who sees what)
 const FUND_TABLES = ["fund_projects", "fund_members", "fund_entries"];
+// approval requests: visible to the person who asked and the approver (the server decides)
+const SHARED_TABLES = ["approvals"];
 
 export const S = {
   mode: SUPABASE_URL && SUPABASE_ANON_KEY ? "cloud" : "demo",
@@ -93,6 +95,7 @@ const cloud = {
       q("calendar_events", x => x.eq("user_id", uid).order("start_at").limit(3000)).catch(() => { S.db.calendar_events = []; }),
       q("task_templates", x => x.eq("user_id", uid).order("created_at")).catch(() => { S.db.task_templates = []; }),
       q("fund_projects", x => x.order("created_at", { ascending: false })),
+      q("approvals", x => x.order("created_at", { ascending: false }).limit(500)).catch(() => { S.db.approvals = []; }),
       q("fund_members", x => x.order("created_at")),
       q("fund_entries", x => x.order("date", { ascending: false }).limit(5000))
     ]);
@@ -126,8 +129,9 @@ const cloud = {
     USER_TABLES.forEach(t => channel.on("postgres_changes", { event: "*", schema: "public", table: t, filter: `user_id=eq.${S.user.id}` }, apply(t)));
     const fundApply = t => p => { apply(t)(p); if (t !== "fund_projects" && p.new?.project_id && !S.db.fund_projects.some(f => f.id === p.new.project_id)) this.reloadFunds(); };
     FUND_TABLES.forEach(t => channel.on("postgres_changes", { event: "INSERT", schema: "public", table: t }, fundApply(t)).on("postgres_changes", { event: "UPDATE", schema: "public", table: t }, fundApply(t)));
+    SHARED_TABLES.forEach(t => channel.on("postgres_changes", { event: "INSERT", schema: "public", table: t }, apply(t)).on("postgres_changes", { event: "UPDATE", schema: "public", table: t }, apply(t)));
     // Deletions can't be filtered by Supabase, so listen to them separately (only the row's id is sent)
-    [...WS_TABLES, ...USER_TABLES, ...FUND_TABLES].forEach(t => channel.on("postgres_changes", { event: "DELETE", schema: "public", table: t }, p => {
+    [...WS_TABLES, ...USER_TABLES, ...FUND_TABLES, ...SHARED_TABLES].forEach(t => channel.on("postgres_changes", { event: "DELETE", schema: "public", table: t }, p => {
       if (p.old && PK[t].every(k => p.old[k] != null)) { localRemove(t, p.old); emit(); }
     }));
     channel.subscribe(status => { S.online = status === "SUBSCRIBED"; emit(); });
@@ -145,6 +149,11 @@ const cloud = {
     const { error } = await q; if (error) throw error;
   },
   async rpc(name, args) { const c = await sbClient(); const { data, error } = await c.rpc(name, args); if (error) throw error; return data; },
+  async auditLog({ kind, before, ws } = {}) {
+    const c = await sbClient(); let q = c.from("audit_log").select("*").order("at", { ascending: false }).limit(100);
+    if (kind) q = q.eq("kind", kind); if (before) q = q.lt("at", before); if (ws) q = q.or(`workspace_id.eq.${ws},workspace_id.is.null`);
+    const { data, error } = await q; if (error) throw error; return data || [];
+  },
   async ai(kind, payload) {
     const c = await sbClient();
     const { data, error } = await c.functions.invoke("ai", { body: { kind, payload } });
@@ -319,6 +328,8 @@ const demo = {
     FUND_TABLES.forEach(t => { demoDB[t] = demoDB[t] || []; });
     const fp = new Set(demoDB.fund_projects.filter(f => f.owner_id === uid || demoDB.fund_members.some(m => m.project_id === f.id && m.user_id === uid)).map(f => f.id));
     FUND_TABLES.forEach(t => { S.db[t] = demoDB[t].filter(r => fp.has(t === "fund_projects" ? r.id : r.project_id)).map(r => ({ ...r })); });
+    demoDB.approvals = demoDB.approvals || [];
+    S.db.approvals = demoDB.approvals.filter(r => r.requested_by === uid || r.approver_id === uid).map(r => ({ ...r }));
   },
   async loadWorkspace(ws) {
     WS_TABLES.forEach(t => { S.db[t] = demoDB[t].filter(r => r.workspace_id === ws).map(r => JSON.parse(JSON.stringify(r))); });

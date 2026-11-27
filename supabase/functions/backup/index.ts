@@ -5,7 +5,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
 const TABLES = ["profiles", "workspaces", "workspace_members", "workspace_invites", "workflows", "tasks", "task_updates",
-  "automations", "routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "chat_messages", "chat_reads", "notifications", "fund_projects", "fund_members", "fund_entries"];
+  "automations", "routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "chat_messages", "chat_reads", "notifications", "fund_projects", "fund_members", "fund_entries", "approvals", "task_templates", "audit_log"];
 const KEEP_DAYS = 30;
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type, apikey, x-client-info" };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
