@@ -4,6 +4,7 @@ import * as E from "./engine.js";
 import * as SP from "./spell.js";
 import * as TP from "./templates.js";
 import * as CAL from "./calendar.js";
+import * as L from "./i18n.js";
 import { ENABLE_GOOGLE, ENABLE_AI, CURRENCY, VAPID_PUBLIC_KEY } from "./config.js";
 
 const { dkey, parseKey, addDays } = E;
@@ -1450,6 +1451,8 @@ function vSettings() {
     ${mfaCard()}
     ${pushCard()}
     ${backupCard()}
+    <div class="card"><div class="card-h"><h2>🌐 Language</h2></div><div class="seg"><button class="${L.lang() === "en" ? "on" : ""}" data-action="set-lang" data-v="en">English</button><button class="${L.lang() === "ar" ? "on" : ""}" data-action="set-lang" data-v="ar" lang="ar">العربية</button></div>
+      <p class="muted" style="font-size:12.5px;margin:8px 0 0" data-no-tr>Arabic shows TaskerBay's screens right-to-left in Arabic. Your own tasks stay as you wrote them. When adding tasks, dates and times are still understood in English (e.g. “tomorrow 3pm”).</p></div>
     <div class="card"><div class="card-h"><h2>Appearance</h2></div><div class="seg">${THEMES.map(t => `<button class="${theme === t ? "on" : ""}" data-action="set-theme" data-v="${t}">${t === "auto" ? "Auto" : t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div></div>
     <div class="card"><div class="card-h"><h2>Install on your phone</h2></div><ol class="muted" style="margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px">
       <li><b>iPhone:</b> open this page in Safari → Share → <b>Add to Home Screen</b>.</li><li><b>Android:</b> open in Chrome → ⋮ menu → <b>Install app</b>.</li><li>Sign in with the same account on every device. Everything syncs live.</li></ol>
@@ -1864,6 +1867,7 @@ document.addEventListener("click", async e => {
   if (act.startsWith("cal-")) { await calendarAction(act, a); return; }
   if (act.startsWith("dg-")) { await digestAction(act, a); return; }
   if (act === "voice") { voiceStart(a); return; }
+  if (act === "set-lang") { L.applyLang(a.dataset.v); render(); toast(a.dataset.v === "ar" ? "تم التبديل إلى العربية" : "Switched to English"); return; }
   if (act.startsWith("rg-")) { try { await regionAction(act, a); } catch (e) { toast(e.message); } return; }
   if (act.startsWith("mfa-")) { await mfaAction(act, a); return; }
   if (act.startsWith("ap-")) { await apAction(act, a); return; }
@@ -3268,7 +3272,7 @@ async function boot() {
     if (!S.wsId) { $("#root").innerHTML = `<div class="auth"><div class="auth-card"><h1>Almost there</h1><p class="lead">Your account has no workspace yet. Make sure the database setup script has been run, then reload.</p><button class="btn" onclick="location.reload()">Reload</button></div></div>`; return; }
     await api.loadWorkspace(S.wsId);
     { const cal = loadCalendar().catch(() => {}); await Promise.race([cal, new Promise(r => setTimeout(r, 1500))]); cal.then(() => S.ready && render()); }
-    shell(); S.ready = true;
+    shell(); S.ready = true; L.applyLang(L.lang());
     const h = location.hash.slice(1); U.view = VIEWS[h] ? h : "today";
     render(true);
     openFromHash();

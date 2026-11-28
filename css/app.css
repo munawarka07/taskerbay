@@ -907,3 +907,6 @@ small.red,.red{color:var(--red)}
 .vnote:first-child{border-top:0}.vnote small{grid-column:1;color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vnote em{grid-row:1;grid-column:2;font-style:normal;font-size:12px;color:var(--muted)}
 #v-body{margin-top:8px;font-family:inherit;line-height:1.5}
 .cf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0 10px}
+[dir=rtl] .tl-scroll,[dir=rtl] .fbar,[dir=rtl] .fticks,[dir=rtl] .ins-bars,[dir=rtl] .ins-line,[dir=rtl] .num{direction:ltr}
+[dir=rtl] .tl-scroll{text-align:left}[dir=rtl] .dep .link,[dir=rtl] .tl-name,[dir=rtl] .vnote,[dir=rtl] .tpl-card{text-align:right}
+[dir=rtl] body{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans Arabic","Geeza Pro",Tahoma,sans-serif}
