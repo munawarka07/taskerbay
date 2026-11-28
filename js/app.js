@@ -397,7 +397,7 @@ function renderChrome() {
 }
 
 /* ================= Routing & render ================= */
-const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, funds: vFunds, approvals: vApprovals, report: vReport, activity: vActivity, admin: vAdmin, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
+const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, funds: vFunds, approvals: vApprovals, timeline: vTimeline, report: vReport, activity: vActivity, admin: vAdmin, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
 function render(animate = false) {
   if (!S.ready) return;
   renderChrome();
@@ -406,6 +406,7 @@ function render(animate = false) {
   v.innerHTML = VIEWS[U.view](animate);
   if (aeId) { const n = $("#" + aeId); if (n) { if (val != null) n.value = val; n.focus(); if (sel) try { n.setSelectionRange(...sel); } catch (e) {} } }
   afterRender(animate);
+  { let tp = document.getElementById("timer-pill-wrap"); if (!tp) { tp = document.createElement("div"); tp.id = "timer-pill-wrap"; document.body.appendChild(tp); } tp.innerHTML = timerPill(); }
   if (animate) { v.classList.remove("enter"); void v.offsetWidth; v.classList.add("enter"); setTimeout(() => v.classList.remove("enter"), 900); }
   if (U.sheet?.type === "task") refreshTaskSheet();
 }
@@ -444,6 +445,8 @@ function taskRow(t, opts = {}) {
   if (pg) chips.push(`<span class="chip subbar">${pg.done}/${pg.total}<span><i style="width:${pg.pct * 100}%"></i></span></span>`);
   chips.push(`<span class="chip dot" style="--c:${AREA_C[t.area] || "var(--muted)"}">${esc(t.area)}</span>`);
   if (t.repeat) chips.push(`<span class="chip">${I.repeat} ${esc(E.repeatLabel(t.repeat))}</span>`);
+  if (!done) { const w = waitingOn(t); if (w.length) chips.push(`<span class="chip warn" title="Waiting on: ${esc(w.map(x => x.title).join(", "))}">🔒 Waiting on ${w.length}</span>`); }
+  { const tm = trackedMin(t.id); if (tm) chips.push(`<span class="chip">⏱ ${durTxt(tm)}</span>`); if (runningEntry()?.task_id === t.id) chips.push(`<span class="chip ok">● Timer on</span>`); }
   { const cu = chatUnread(t.id); if (cu) chips.push(`<span class="chip chat-chip">💬 ${cu}</span>`); }
   if (t.parent_id && opts.showParent) { const p = task(t.parent_id); if (p) chips.push(`<span class="chip">↳ ${esc(p.title).slice(0, 24)}</span>`); }
   return `<div class="row ${done ? "done" : ""}" style="--p:${PRI_C[t.priority]}" data-id="${t.id}" data-swipe="1">
@@ -607,7 +610,7 @@ function vPlan() {
     return line + `<div class="tl"><div class="tm">${it.time}</div><div>${body}</div></div>`;
   }).join("") + (!nowPlaced ? `<div class="tl now"><div class="tm">${nowT}</div><div class="now-line"></div></div>` : "");
   return `
-  <div class="view-h"><div><h1>Planner</h1><p>${selDate.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}${E.holidayOn(dkey(selDate)) ? ` · 🎉 ${esc(E.holidayOn(dkey(selDate)).name)}` : !E.isWorkday(selDate) ? " · day off" : ""}</p></div>
+  <div class="view-h"><div><h1>Planner</h1><p>${selDate.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}${E.holidayOn(dkey(selDate)) ? ` · 🎉 ${esc(E.holidayOn(dkey(selDate)).name)}` : !E.isWorkday(selDate) ? " · day off" : ""}</p></div><button class="btn ghost" data-action="plan-week">✨ Plan my week</button>
     <div class="month-nav"><button class="icon-btn" data-action="week" data-v="-1" aria-label="Previous week">${I.left}</button><button class="btn ghost" data-action="week" data-v="0" style="padding:8px 12px">This week</button><button class="icon-btn" data-action="week" data-v="1" aria-label="Next week">${I.right}</button></div></div>
   <div class="card"><div class="weekstrip">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !E.isDone(t) && !t.parent_id); const od = ts.some(t => E.dueStatus(t) === "overdue"); return `<button class="day ${k === tk ? "today" : ""} ${sel === k ? "on" : ""} ${E.isWorkday(d) ? "" : "off"} ${E.holidayOn(k) ? "hol" : ""}" data-action="plan-day" data-v="${k}" ${E.holidayOn(k) ? `title="${esc(E.holidayOn(k).name)}"` : ""}><small>${d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><span class="dots">${ts.slice(0, 4).map(() => `<i class="${od ? "r" : ""}"></i>`).join("")}</span></button>`; }).join("")}</div></div>
   <div class="pl-cols">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !t.parent_id).sort(sortTasks); return `<div class="pl-day ${k === tk ? "today" : ""}" data-drop-day="${k}"><h4>${d.toLocaleDateString("en-GB", { weekday: "short" })}<b>${d.getDate()}</b></h4>${E.holidayOn(k) ? `<div class="pl-hol">🎉 ${esc(E.holidayOn(k).name)}</div>` : ""}${meetingsOn(k).filter(m => !m.allDay).map(m => `<div class="pl-item pl-meet" data-action="plan-day" data-v="${k}"><small>${hm(m.sm)}</small>${esc(m.title)}</div>`).join("")}${ts.map(t => `<div class="pl-item ${E.isDone(t) ? "done" : ""}" draggable="true" data-drag-task="${t.id}" data-action="open-task" data-id="${t.id}" style="--p:${PRI_C[t.priority]}">${t.due_time ? `<small>${fmtTime(t.due_time)}</small>` : ""}${esc(t.title)}</div>`).join("")}<button class="add-card" style="color:var(--muted);font-weight:700;font-size:12px;padding:6px;text-align:left" data-action="new-task" data-due="${k}">＋ Add</button></div>`; }).join("")}</div>
@@ -738,6 +741,8 @@ function refreshTaskSheet(first) {
       ${members.length > 1 ? `<div class="field"><label for="tf-as">Assigned to</label><select class="inp" id="tf-as" data-tfield="assignee_id"><option value="">Nobody</option>${members.map(u => `<option value="${u}" ${t.assignee_id === u ? "selected" : ""}>${esc(nameOf(u))}${u === me() ? " (me)" : ""}</option>`).join("")}</select></div>` : ""}
       <div class="field"><label for="tf-est">Takes (minutes)</label><input class="inp" type="number" min="0" step="5" id="tf-est" data-tfield="estimate_min" value="${t.estimate_min ?? ""}" inputmode="numeric"></div>
     </div>
+    ${depsField(t)}
+    ${timeField(t)}
     <div class="field"><label for="tf-notes">Notes</label><textarea class="inp" id="tf-notes" data-tfield="notes" placeholder="Details, links, decisions…">${esc(t.notes)}</textarea></div>
     <div class="card" style="padding:14px;box-shadow:none">
       <div class="card-h" style="margin-bottom:8px"><h2>Steps ${pg ? `<span class="sub">${pg.done}/${pg.total} · ${Math.round(pg.pct * 100)}%</span>` : ""}</h2>${AI_ON ? `<button class="ai-btn" data-action="ai-breakdown" style="padding:6px 11px;font-size:12.5px"><span class="spark">✨</span>Break it down</button>` : ""}</div>
@@ -1424,7 +1429,7 @@ function vInbox() {
   <div class="list">${list.map(n => `<div class="notif ${n.read ? "" : "unread"}" data-action="notif" data-id="${n.id}">${avatar(n.actor_id, true)}<div><p>${esc(n.body)}</p><small>${timeAgo(n.created_at)}${n.workspace_id && n.workspace_id !== S.wsId ? ` · ${esc(S.db.workspaces.find(w => w.id === n.workspace_id)?.name || "")}` : ""}</small></div></div>`).join("") || emptyBox("All quiet", "Assignments, status changes and updates from your team appear here.", I.bell)}</div>`;
 }
 function vMore() {
-  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending, budgets & funds"], ["funds", "🤝", "Funds", fundsWaiting() ? `${fundsWaiting()} waiting for you` : "Event & project budgets"], ["approvals", "✅", "Approvals", apprWaiting() ? `${apprWaiting()} waiting for you` : "Ask, approve, keep a record"], ["report", "📈", "Weekly report", "What got done, what slipped · PDF"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["activity", "🧾", "Activity log", "Who changed what, and when"], ["settings", "⚙️", "Settings", "Profile, theme, install"], ...(U.isAdmin ? [["admin", "🛡️", "Admin", "Users, sign-ins, trials"]] : [])];
+  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending, budgets & funds"], ["funds", "🤝", "Funds", fundsWaiting() ? `${fundsWaiting()} waiting for you` : "Event & project budgets"], ["approvals", "✅", "Approvals", apprWaiting() ? `${apprWaiting()} waiting for you` : "Ask, approve, keep a record"], ["report", "📈", "Weekly report", "What got done, what slipped · PDF"], ["timeline", "📅", "Timeline", "Tasks laid out by day, with dependencies"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["activity", "🧾", "Activity log", "Who changed what, and when"], ["settings", "⚙️", "Settings", "Profile, theme, install"], ...(U.isAdmin ? [["admin", "🛡️", "Admin", "Users, sign-ins, trials"]] : [])];
   return `<div class="view-h"><div><h1>More</h1><p>Everything else in TaskerBay</p></div></div><div class="hub">${H.map(([k, i, l, s]) => `<button data-go="${k}"><span class="ic">${i}</span><b>${l}</b><small>${s}</small></button>`).join("")}</div>`;
 }
 function vSettings() {
@@ -1436,6 +1441,7 @@ function vSettings() {
     ${accessCard()}
     ${calendarCard()}
     ${regionCard()}
+    ${escCard()}
     ${digestCard()}
     ${packsCard()}
     ${mfaCard()}
@@ -1859,6 +1865,13 @@ document.addEventListener("click", async e => {
   if (act.startsWith("ap-")) { await apAction(act, a); return; }
   if (act === "nudge") { a.disabled = true; try { const r = await api.mail("nudge", a.dataset.id); toast(r?.sent ? `Reminder emailed to ${r.email}.` : "They can't be emailed right now."); } catch (e) { toast(e.message); } a.disabled = false; return; }
   if (act === "rep-off") { U.repOff = +a.dataset.v; render(); return; }
+  if (act === "dep-del") { const t = task(a.dataset.id); if (t) await depSet(t, (t.blocked_by || []).filter(x => x !== a.dataset.v)); return; }
+  if (act === "tm-start") { try { await tmStart(a.dataset.id); } catch (e) { toast(e.message); } return; }
+  if (act === "tm-stop") { try { await tmStop(); } catch (e) { toast(e.message); } return; }
+  if (act === "tm-del") { const e0 = (S.db.time_entries || []).find(x => x.id === a.dataset.v); if (e0) { try { await remove("time_entries", e0); } catch (e) { toast(e.message); } } return; }
+  if (act === "tl-span") { U.tlSpan = +a.dataset.v; render(); return; }
+  if (act === "plan-week") { planSheet(); return; }
+  if (act === "esc-toggle" || act === "esc-del") { const r = (S.db.escalation_rules || []).find(x => x.id === a.dataset.id); if (!r) return; try { act === "esc-del" ? await remove("escalation_rules", r) : await update("escalation_rules", r, { active: !r.active }); } catch (e) { toast(e.message); } render(); return; }
   if (act === "rep-pdf") { a.disabled = true; try { await reportPdf(); } catch (e) { toast("Couldn't make the PDF: " + (e.message || e)); } a.disabled = false; return; }
   if (act === "act-kind") { U.actKind = a.dataset.v; render(); return; }
   if (act === "act-more") { a.disabled = true; try { await actMore(); } catch (e) { toast(e.message); a.disabled = false; } return; }
@@ -2008,6 +2021,7 @@ document.addEventListener("click", async e => {
 function reopenAuto() { const s = U.sheet; autoSheet(s.a, s.isNew); }
 
 document.addEventListener("change", async e => {
+  if (e.target.id === "dep-add" && e.target.value) { const t = task(e.target.dataset.id); if (t) await depSet(t, [...(t.blocked_by || []), e.target.value]); return; }
   if (e.target.id === "rg-c") { const c = e.target.value; try { await saveRegion({ region: c, work_days: CAL.defaultWorkDays(c) }); toast(`Using ${CAL.countryName(c)}'s weekend and holidays.`); } catch (err) { toast(err.message); } return; }
   if (e.target.dataset?.hol) { const d = e.target.dataset.hol, p = { off: [], add: [], ...holPrefs() }; const set = new Set(p.off); e.target.checked ? set.delete(d) : set.add(d); p.off = [...set]; try { await saveRegion({ holiday_prefs: p }); } catch (err) { toast(err.message); } return; }
   if (e.target.dataset?.pack) { const k = e.target.dataset.pack, cur = new Set(myPacks()); e.target.checked ? cur.add(k) : cur.delete(k); const v = [...cur], pr = profile(me());
@@ -2077,6 +2091,11 @@ document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind?.startsWith("fd-")) { await fundSubmit(kind, f, e); return; }
   if (kind === "tpl") { await tplCreate(f); return; }
+  if (kind === "tm-add") { const m = parseInt($("#tm-min").value, 10); if (!(m > 0 && m <= 1440)) return toast("Enter minutes, 1 to 1440."); const t = task(f.dataset.id); try { await insert("time_entries", { id: uuid(), user_id: me(), workspace_id: t?.workspace_id || S.wsId, task_id: f.dataset.id, started_at: new Date(Date.now() - m * 6e4).toISOString(), ended_at: new Date().toISOString(), minutes: m, note: "", created_at: new Date().toISOString() }); toast(`Added ${durTxt(m)}.`); render(); } catch (err) { toast(err.message); } return; }
+  if (kind === "plan2") { const picks = [...f.querySelectorAll("input[data-i]:checked")].map(x => U.plan2[+x.dataset.i]); const b = f.querySelector("[type=submit]"); b.disabled = true;
+    try { for (const p of picks) await E.changeTask(p.t, { due_date: p.k, due_time: minT(p.s) + ":00", estimate_min: p.t.estimate_min || p.need }); closeSheet(); toast(`Scheduled ${picks.length} task${picks.length === 1 ? "" : "s"}.`); } catch (err) { b.disabled = false; toast(err.message); } return; }
+  if (kind === "esc-add") { const n = parseInt($("#esc-n").value, 10), u = +$("#esc-u").value, w = $("#esc-who").value; if (!(n > 0)) return toast("Enter how long."); const hours = Math.min(2160, n * u);
+    try { await insert("escalation_rules", { id: uuid(), workspace_id: S.wsId, kind: $("#esc-kind").value, hours, notify: w.startsWith("p:") ? "person" : w, person_id: w.startsWith("p:") ? w.slice(2) : null, high_only: $("#esc-high").checked, active: true, created_by: me(), created_at: new Date().toISOString() }); toast("Rule added. Matching items are checked every 15 minutes."); render(); } catch (err) { toast(err.message); } return; }
   if (kind === "rg-add") { const d = $("#rg-date").value; if (!d) return; const p = { off: [], add: [], ...holPrefs() }; p.add = [...p.add.filter(h => h.date !== d), { date: d, name: $("#rg-name").value.trim() || "Day off" }].sort((a, b) => a.date.localeCompare(b.date)).slice(-200); try { await saveRegion({ holiday_prefs: p }); toast("Day off added."); } catch (err) { toast(err.message); } return; }
   if (kind === "ap-new") { await apSubmit(f); return; }
   if (kind === "ap-decide") { const row = (S.db.approvals || []).find(x => x.id === f.dataset.id); if (!row) return; const ok = f.dataset.ok === "1", b = f.querySelector("[type=submit]"); b.disabled = true;
@@ -2668,7 +2687,10 @@ function weekData(offset = 0) {
   const byArea = {}; doneIn.forEach(t => { byArea[t.area || "Other"] = (byArea[t.area || "Other"] || 0) + 1; });
   const byPerson = {}; if (isTeam()) doneIn.forEach(t => { const u = t.assignee_id || t.created_by; byPerson[u] = (byPerson[u] || 0) + 1; });
   const onTime = doneIn.filter(t => t.due_date).length ? Math.round(100 * (1 - late.length / doneIn.filter(t => t.due_date).length)) : null;
-  return { start, end, sk, ek, doneIn, overdue, late, next, focusMin, byArea, byPerson, onTime, mineOnly };
+  const tEnt = (S.db.time_entries || []).filter(e => e.ended_at && dkey(new Date(e.started_at)) >= sk && dkey(new Date(e.started_at)) <= ek);
+  const tracked = tEnt.reduce((x, e) => x + (e.minutes || 0), 0), byTask = {};
+  tEnt.forEach(e => { const k = e.task_id || "-"; byTask[k] = (byTask[k] || 0) + (e.minutes || 0); });
+  return { start, end, sk, ek, doneIn, overdue, late, next, focusMin, byArea, byPerson, onTime, mineOnly, tracked, byTask };
 }
 function vReport() {
   const off = U.repOff || 0, d = weekData(off), f = x => x.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
@@ -2679,13 +2701,14 @@ function vReport() {
     <div class="card stat" style="--c:var(--green)"><div class="k"><i></i>Done</div><div class="v num">${d.doneIn.length}</div><div class="s">${d.onTime == null ? "tasks finished" : `${d.onTime}% on time`}</div></div>
     <div class="card stat" style="--c:var(--red)"><div class="k"><i></i>Overdue now</div><div class="v num">${d.overdue.length}</div><div class="s">still open</div></div>
     <div class="card stat" style="--c:var(--gold)"><div class="k"><i></i>Finished late</div><div class="v num">${d.late.length}</div><div class="s">after the due date</div></div>
-    <div class="card stat" style="--c:var(--accent)"><div class="k"><i></i>Focus time</div><div class="v num">${Math.floor(d.focusMin / 60)}h ${d.focusMin % 60}m</div><div class="s">in focus sessions</div></div>
+    <div class="card stat" style="--c:var(--accent)"><div class="k"><i></i>Time tracked</div><div class="v num">${Math.floor((d.tracked + d.focusMin) / 60)}h ${(d.tracked + d.focusMin) % 60}m</div><div class="s">timers ${durTxt(d.tracked) || "0m"} · focus ${durTxt(d.focusMin) || "0m"}</div></div>
   </div>
   <div class="grid g-2">
     <div class="card"><div class="card-h"><h2>✅ Done</h2></div>${list(d.doneIn.sort((a, b) => a.completed_at.localeCompare(b.completed_at)), "Nothing finished in this week.")}</div>
     <div class="grid" style="gap:14px;align-content:start">
       <div class="card"><div class="card-h"><h2>⚠️ Overdue</h2></div>${list(d.overdue.sort((a, b) => a.due_date.localeCompare(b.due_date)), "Nothing overdue. 👏", true)}</div>
       <div class="card"><div class="card-h"><h2>➡️ Coming up next week</h2></div>${list(d.next, "Nothing scheduled yet.", true)}</div>
+      ${Object.keys(d.byTask).length ? `<div class="card"><div class="card-h"><h2>⏱ Time by task</h2></div>${Object.entries(d.byTask).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, m]) => `<div class="rep-row" ${task(id) ? `data-action="open-task" data-id="${id}"` : ""}><span>${esc(task(id)?.title || "Other")}</span><b>${durTxt(m)}</b></div>`).join("")}</div>` : ""}
       ${Object.keys(d.byPerson).length ? `<div class="card"><div class="card-h"><h2>👥 Done by person</h2></div>${Object.entries(d.byPerson).sort((a, b) => b[1] - a[1]).map(([u, n]) => `<div class="rep-row"><span>${esc(nameOf(u))}</span><b>${n}</b></div>`).join("")}</div>` : ""}
     </div>
   </div>`;
@@ -2701,7 +2724,7 @@ async function reportPdf() {
   const d = weekData(U.repOff || 0), f = x => x.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }), who = t => nameOf(t.assignee_id || t.created_by);
   const r = new Report({ title: "Weekly report", subtitle: `${f(d.start)} – ${f(d.end)} · ${ws()?.name || ""} · ${nameOf(me())}`, footer: "TaskerBay · taskerbay.com" });
   r.heading("Summary");
-  r.boxes([["Done", String(d.doneIn.length), [22, 140, 80]], ["On time", d.onTime == null ? "-" : d.onTime + "%"], ["Finished late", String(d.late.length), [170, 120, 0]], ["Overdue now", String(d.overdue.length), [200, 40, 40]], ["Due next week", String(d.next.length)], ["Focus time", `${Math.floor(d.focusMin / 60)}h ${d.focusMin % 60}m`]]);
+  r.boxes([["Done", String(d.doneIn.length), [22, 140, 80]], ["On time", d.onTime == null ? "-" : d.onTime + "%"], ["Finished late", String(d.late.length), [170, 120, 0]], ["Overdue now", String(d.overdue.length), [200, 40, 40]], ["Due next week", String(d.next.length)], ["Time tracked", `${Math.floor((d.tracked + d.focusMin) / 60)}h ${(d.tracked + d.focusMin) % 60}m`]]);
   const dt = k => k ? parseKey(k).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) : "-";
   const cols = isTeam() ? [{ h: "Task", w: .5, bold: true }, { h: "Person", w: .2 }, { h: "Due", w: .15 }, { h: "Done", w: .15 }] : [{ h: "Task", w: .64, bold: true }, { h: "Due", w: .18 }, { h: "Done", w: .18 }];
   const rowOf = t => isTeam() ? [t.title, who(t), dt(t.due_date), t.completed_at ? dt(dkey(new Date(t.completed_at))) : ""] : [t.title, dt(t.due_date), t.completed_at ? dt(dkey(new Date(t.completed_at))) : ""];
@@ -2713,6 +2736,7 @@ async function reportPdf() {
   r.heading("Coming up next week");
   if (d.next.length) r.table(cols, d.next.map(rowOf)); else r.note("Nothing scheduled yet.");
   if (Object.keys(d.byArea).length) { r.heading("Done by area"); r.table([{ h: "Area", w: .7, bold: true }, { h: "Tasks", w: .3, align: "right" }], Object.entries(d.byArea).sort((a, b) => b[1] - a[1]).map(([a, n]) => [a, String(n)])); }
+  if (Object.keys(d.byTask).length) { r.heading("Time by task"); r.table([{ h: "Task", w: .75, bold: true }, { h: "Time", w: .25, align: "right" }], Object.entries(d.byTask).sort((a, b) => b[1] - a[1]).map(([id, m]) => [task(id)?.title || "Other", durTxt(m)])); }
   if (Object.keys(d.byPerson).length) { r.heading("Done by person"); r.table([{ h: "Person", w: .7, bold: true }, { h: "Tasks", w: .3, align: "right" }], Object.entries(d.byPerson).sort((a, b) => b[1] - a[1]).map(([u, n]) => [nameOf(u), String(n)])); }
   await savePdf(r, `weekly-report-${d.ek}.pdf`, "Weekly report");
 }
@@ -2823,6 +2847,119 @@ async function regionAction(act, a) {
   if (act === "rg-day") { const d = +a.dataset.v, set = new Set(work); set.has(d) ? set.delete(d) : set.add(d); if (!set.size) return toast("Keep at least one working day."); await saveRegion({ work_days: [...set].sort() }); return; }
   if (act === "rg-year") { U.holYear = +a.dataset.v; render(); return; }
   if (act === "rg-del") { prefs.add = prefs.add.filter(h => h.date !== a.dataset.v); await saveRegion({ holiday_prefs: prefs }); toast("Removed."); }
+}
+
+/* ================= Dependencies ================= */
+const waitingOn = t => (t.blocked_by || []).map(id => task(id)).filter(x => x && !E.isDone(x));
+const blocksOthers = t => S.db.tasks.filter(x => (x.blocked_by || []).includes(t.id) && !E.isDone(x));
+function depsField(t) {
+  const w = (t.blocked_by || []).map(id => task(id)).filter(Boolean), after = blocksOthers(t);
+  const cand = S.db.tasks.filter(x => x.id !== t.id && !E.isDone(x) && !(t.blocked_by || []).includes(x.id) && !(x.blocked_by || []).includes(t.id) && x.parent_id !== t.id).sort((a, b) => (a.due_date || "9").localeCompare(b.due_date || "9")).slice(0, 200);
+  return `<div class="field deps"><span class="lab">Waiting on</span>
+    ${w.length ? `<div class="dep-list">${w.map(x => `<span class="dep ${E.isDone(x) ? "ok" : ""}"><button class="link" data-action="open-task" data-id="${x.id}">${E.isDone(x) ? "✅" : "🔒"} ${esc(x.title)}</button>${x.due_date && t.due_date && x.due_date > t.due_date && !E.isDone(x) ? ` <small class="red">due after this one</small>` : ""}<button class="x" data-action="dep-del" data-id="${t.id}" data-v="${x.id}" aria-label="Remove">×</button></span>`).join("")}</div>` : ""}
+    ${cand.length ? `<select class="inp" id="dep-add" data-id="${t.id}"><option value="">${w.length ? "Add another task it waits on…" : "Can't start until another task is done? Pick it…"}</option>${cand.map(x => `<option value="${x.id}">${esc(x.title.slice(0, 70))}${x.due_date ? ` · ${esc(dueLabel(x))}` : ""}</option>`).join("")}</select>` : ""}
+    ${after.length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Holding up: ${after.map(x => `<button class="link" data-action="open-task" data-id="${x.id}">${esc(x.title)}</button>`).join(", ")}</p>` : ""}</div>`;
+}
+async function depSet(t, list) { try { await E.changeTask(t, { blocked_by: list }); } catch (e) { toast(e.message); } }
+
+/* ================= Time tracking ================= */
+const runningEntry = () => (S.db.time_entries || []).find(e => e.user_id === me() && !e.ended_at) || null;
+const trackedMin = id => (S.db.time_entries || []).filter(e => e.task_id === id).reduce((s, e) => s + (e.ended_at ? e.minutes || 0 : Math.round((Date.now() - new Date(e.started_at)) / 6e4)), 0);
+function timeField(t) {
+  const run = runningEntry(), mine = run?.task_id === t.id, tot = trackedMin(t.id);
+  const ents = (S.db.time_entries || []).filter(e => e.task_id === t.id && e.ended_at).slice(0, 5);
+  return `<div class="field time-f"><span class="lab">Time spent${tot ? ` · ${durTxt(tot)}` : ""}</span>
+    <div class="time-btns">${mine ? `<button class="btn danger" data-action="tm-stop">⏹ Stop timer</button>` : `<button class="btn ghost" data-action="tm-start" data-id="${t.id}">▶ Start timer</button>`}
+    <form data-form="tm-add" data-id="${t.id}" class="tm-add"><input class="inp" id="tm-min" inputmode="numeric" placeholder="min" aria-label="Minutes" maxlength="4"><button class="btn ghost" type="submit">Add time</button></form></div>
+    ${ents.length ? `<div class="tm-list">${ents.map(e => `<span>${esc(new Date(e.started_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }))} · ${durTxt(e.minutes || 0)}${e.user_id !== me() ? ` · ${esc(nameOf(e.user_id).split(" ")[0])}` : ""}${e.user_id === me() ? `<button class="x" data-action="tm-del" data-v="${e.id}" aria-label="Delete">×</button>` : ""}</span>`).join("")}</div>` : ""}</div>`;
+}
+async function tmStart(taskId) {
+  const run = runningEntry(); if (run) await tmStop(true);
+  const t = task(taskId);
+  await insert("time_entries", { id: uuid(), user_id: me(), workspace_id: t?.workspace_id || S.wsId, task_id: taskId, started_at: new Date().toISOString(), ended_at: null, minutes: null, note: "", created_at: new Date().toISOString() });
+  toast("Timer started."); render();
+}
+async function tmStop(quiet) {
+  const run = runningEntry(); if (!run) return;
+  const min = Math.max(1, Math.min(1440, Math.round((Date.now() - new Date(run.started_at)) / 6e4)));
+  await update("time_entries", run, { ended_at: new Date().toISOString(), minutes: min });
+  if (!quiet) toast(`Logged ${durTxt(min)}${run.task_id && task(run.task_id) ? ` on “${task(run.task_id).title}”` : ""}.`); render();
+}
+function timerPill() {
+  const r = runningEntry(); if (!r) return "";
+  const t = r.task_id ? task(r.task_id) : null, sec = Math.max(0, Math.floor((Date.now() - new Date(r.started_at)) / 1000));
+  const hh = String(Math.floor(sec / 3600)).padStart(2, "0"), mm = String(Math.floor(sec / 60) % 60).padStart(2, "0"), ss = String(sec % 60).padStart(2, "0");
+  return `<div class="timer-pill"><button class="tp-main" ${t ? `data-action="open-task" data-id="${t.id}"` : ""}><span class="dot"></span><b class="num" id="tp-clock">${hh}:${mm}:${ss}</b><span class="tp-t">${esc(t?.title || "Timer")}</span></button><button class="tp-stop" data-action="tm-stop" aria-label="Stop timer">⏹</button></div>`;
+}
+setInterval(() => { const el = document.getElementById("tp-clock"), r = runningEntry(); if (!el || !r) return; const sec = Math.max(0, Math.floor((Date.now() - new Date(r.started_at)) / 1000)); el.textContent = `${String(Math.floor(sec / 3600)).padStart(2, "0")}:${String(Math.floor(sec / 60) % 60).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`; }, 1000);
+
+/* ================= Timeline ================= */
+function vTimeline() {
+  const span = U.tlSpan || 28, start = addDays(parseKey(dkey()), -(U.tlBack ?? 3)), days = [...Array(span)].map((_, i) => addDays(start, i)), sk = dkey(days[0]), ek = dkey(days[span - 1]);
+  const ts = S.db.tasks.filter(t => !E.isDone(t) && (t.due_date || t.start_date) && ((t.start_date || t.due_date) <= ek) && ((t.due_date || t.start_date) >= sk))
+    .sort((a, b) => ((a.start_date || a.due_date) + (a.due_time || "")).localeCompare((b.start_date || b.due_date) + (b.due_time || "")));
+  const W = 34, idx = k => Math.round((parseKey(k) - days[0]) / 864e5);
+  const head = days.map(d => { const k = dkey(d), off = !E.isWorkday(d), hol = E.holidayOn(k); return `<div class="tl-d ${k === dkey() ? "today" : ""} ${off ? "off" : ""}" title="${hol ? esc(hol.name) : ""}"><small>${d.toLocaleDateString("en-GB", { weekday: "narrow" })}</small><b>${d.getDate()}</b>${hol ? "<i>🎉</i>" : ""}</div>`; }).join("");
+  const rows = ts.map(t => {
+    const a = Math.max(0, idx(t.start_date && t.start_date < (t.due_date || t.start_date) ? t.start_date : (t.due_date || t.start_date))), b = Math.min(span - 1, idx(t.due_date || t.start_date));
+    const w = waitingOn(t), late = w.some(x => x.due_date && t.start_date ? x.due_date > t.start_date : x.due_date && t.due_date && x.due_date > t.due_date);
+    return `<div class="tl-row"><button class="tl-name" data-action="open-task" data-id="${t.id}">${w.length ? "🔒 " : ""}${esc(t.title)}<small>${isTeam() ? esc(nameOf(t.assignee_id || t.created_by).split(" ")[0]) + " · " : ""}${esc(dueLabel(t))}</small></button>
+      <div class="tl-track" style="width:${span * W}px">${days.map((d, i) => !E.isWorkday(d) ? `<i class="tl-off" style="left:${i * W}px;width:${W}px"></i>` : "").join("")}
+      <span class="tl-bar ${E.dueStatus(t)} ${late ? "clash" : ""}" style="left:${a * W + 3}px;width:${Math.max(1, b - a + 1) * W - 6}px;--p:${PRI_C[t.priority]}" title="${esc(t.title)}${w.length ? ` · waiting on ${esc(w.map(x => x.title).join(", "))}` : ""}"></span></div></div>`;
+  }).join("");
+  return `<div class="view-h"><div><h1>Timeline</h1><p>Open tasks with dates, laid out by day. 🔒 = waiting on another task; red outline = it waits on something due later.</p></div></div>
+  <div class="seg" style="margin-bottom:12px">${[[14, "2 weeks"], [28, "4 weeks"], [56, "8 weeks"]].map(([v, l]) => `<button class="${span === v ? "on" : ""}" data-action="tl-span" data-v="${v}">${l}</button>`).join("")}</div>
+  ${ts.length ? `<div class="card tl-card"><div class="tl-scroll"><div class="tl-grid" style="--w:${W}px"><div class="tl-row tl-head"><div class="tl-name"></div><div class="tl-track" style="width:${span * W}px;display:flex">${head}</div></div>${rows}</div></div>
+  <p class="muted" style="font-size:12.5px;margin:10px 0 0">Give a task a <b>start date</b> (in the task) to show it as a bar across several days.</p></div>` : emptyBox("Nothing to show", "Tasks with a due or start date in this period appear here.")}`;
+}
+
+/* ================= Auto-schedule ================= */
+function planWeek() {
+  const today = dkey(), cand = S.db.tasks.filter(t => !E.isDone(t) && (t.assignee_id === me() || (!t.assignee_id && t.created_by === me())) && !E.childrenOf(t.id).some(k => !E.isDone(k)) && !waitingOn(t).length && (!t.due_time) && (!t.due_date || t.due_date <= dkey(addDays(new Date(), 6))));
+  const pr = { High: 0, Medium: 1, Low: 2 };
+  cand.sort((a, b) => (a.due_date && a.due_date < today ? 0 : 1) - (b.due_date && b.due_date < today ? 0 : 1) || (b.starred ? 1 : 0) - (a.starred ? 1 : 0) || pr[a.priority] - pr[b.priority] || (a.due_date || "9").localeCompare(b.due_date || "9"));
+  const days = []; for (let i = 0; days.length < 5 && i < 21; i++) { const d = addDays(new Date(), i); if (E.isWorkday(d)) days.push(dkey(d)); }
+  const gaps = Object.fromEntries(days.map(k => [k, freeSlots(k).gaps.map(g => [...g]).filter(([a, b]) => b - a >= 15)]));
+  const out = [];
+  for (const t of cand) {
+    const need = Math.max(10, t.estimate_min || 30), latest = t.due_date && t.due_date >= today ? t.due_date : null;
+    let placed = null;
+    for (const k of days) {
+      if (latest && k > latest && out.length) { /* allow after due only if nothing earlier fits */ }
+      const g = gaps[k].find(([a, b]) => b - a >= need);
+      if (g) { placed = { k, s: g[0] }; g[0] += need + 5; break; }
+    }
+    if (placed) out.push({ t, k: placed.k, s: placed.s, need, late: latest && placed.k > latest });
+  }
+  return { out, skipped: cand.length - out.length, days };
+}
+function planSheet() {
+  const { out, skipped, days } = planWeek();
+  if (!out.length) { toast(skipped ? "No free slots left in your next working days." : "Nothing to schedule: tasks already have times, or none are due soon."); return; }
+  U.plan2 = out;
+  openSheet(`<h2 id="sheet-title">✨ Plan my week</h2><p class="muted" style="margin:-4px 0 10px;font-size:14px">${out.length} task${out.length > 1 ? "s" : ""} fitted into your free time over the next ${days.length} working days, most urgent first. Untick any you don't want.</p>
+  <form data-form="plan2"><div class="plan2">${out.map((p, i) => `<label class="p2 ${p.late ? "late" : ""}"><input type="checkbox" checked data-i="${i}"><span class="d">${esc(parseKey(p.k).toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }))}<br><b>${fmt12(p.s)}</b></span><span>${esc(p.t.title)}<small>${durTxt(p.need)}${p.t.due_date ? ` · was due ${esc(dueLabel(p.t))}` : ""}${p.late ? " · after its due date" : ""}</small></span></label>`).join("")}</div>
+  ${skipped ? `<p class="muted" style="font-size:12.5px">${skipped} more didn't fit. Free up time or plan again tomorrow.</p>` : ""}
+  <p class="muted" style="font-size:12.5px">Tasks without a “Takes” time count as 30 minutes. Tasks waiting on others are skipped.</p>
+  <div class="sheet-actions"><button type="button" class="btn ghost" data-action="close-sheet">Cancel</button><button class="btn" type="submit">Schedule them</button></div></form>`, "wide");
+}
+
+/* ================= Escalation rules ================= */
+const ESC_KIND = { task_overdue: "a task is overdue", task_no_update: "a task has no update", approval_waiting: "an approval is still waiting" };
+function escCard() {
+  if (!isTeam()) return "";
+  const admin = E.canAdmin?.() ?? (ws()?.owner_id === me() || S.db.workspace_members.some(m => m.user_id === me() && /owner|admin/.test(m.role)));
+  const rules = S.db.escalation_rules || [], people = S.db.workspace_members.map(m => m.user_id);
+  const who = r => r.notify === "owner" ? (r.kind === "approval_waiting" ? "the approver" : "the owner") : r.notify === "creator" ? (r.kind === "approval_waiting" ? "the person who asked" : "whoever created it") : nameOf(r.person_id);
+  const hrs = h => h % 24 === 0 ? `${h / 24} day${h / 24 > 1 ? "s" : ""}` : `${h} hour${h > 1 ? "s" : ""}`;
+  return `<div class="card"><div class="card-h"><h2>🚨 Escalation rules</h2><span class="sub">${esc(ws()?.name || "")}</span></div>
+    <p class="muted" style="margin:0 0 10px;font-size:14px">Alert someone when work stalls. Each item is escalated once per rule, with a popup and an inbox note.</p>
+    ${rules.length ? `<div class="esc-list">${rules.map(r => `<div class="esc ${r.active ? "" : "off"}"><span>If ${ESC_KIND[r.kind]}${r.high_only ? " (high priority)" : ""} for more than <b>${hrs(r.hours)}</b> → alert <b>${esc(who(r))}</b></span>${admin ? `<span class="esc-b"><button class="link" data-action="esc-toggle" data-id="${r.id}">${r.active ? "Pause" : "Resume"}</button><button class="link danger-t" data-action="esc-del" data-id="${r.id}">Delete</button></span>` : ""}</div>`).join("")}</div>` : `<p class="muted" style="font-size:13.5px">No rules yet.</p>`}
+    ${admin ? `<form data-form="esc-add" class="esc-form"><span>If</span><select class="inp" id="esc-kind">${Object.entries(ESC_KIND).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select><span>for more than</span>
+      <input class="inp" id="esc-n" inputmode="numeric" value="1" style="width:64px" aria-label="How long"><select class="inp" id="esc-u" style="width:auto"><option value="24">days</option><option value="1">hours</option></select>
+      <span>alert</span><select class="inp" id="esc-who"><option value="owner">the owner / approver</option><option value="creator">the creator / requester</option>${people.map(u => `<option value="p:${u}">${esc(nameOf(u))}</option>`).join("")}</select>
+      <label class="tog"><input type="checkbox" id="esc-high"> High priority only</label><button class="btn" type="submit">Add rule</button></form>` : `<p class="muted" style="font-size:12.5px">Only workspace admins can change rules.</p>`}
+  </div>`;
 }
 
 /* ================= Morning email ================= */

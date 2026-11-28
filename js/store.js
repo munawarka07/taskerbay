@@ -7,10 +7,10 @@ export const PK = {
   routine_items: ["id"], routine_logs: ["item_id", "day"], journal: ["user_id", "day"], focus_sessions: ["id"],
   expenses: ["id"], budgets: ["user_id", "category"],
   chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"],
-  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"], task_templates: ["id"], approvals: ["id"]
+  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"], task_templates: ["id"], approvals: ["id"], time_entries: ["id"], escalation_rules: ["id"]
 };
 const TABLES = Object.keys(PK);
-const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages"];
+const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages", "time_entries", "escalation_rules"];
 const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads", "calendar_events", "task_templates"];
 // shared money funds: visible to the creator and the people added to them (the server decides who sees what)
 const FUND_TABLES = ["fund_projects", "fund_members", "fund_entries"];
@@ -110,7 +110,9 @@ const cloud = {
       q("automations", x => x.eq("workspace_id", ws).order("created_at")),
       q("workspace_members", x => x.eq("workspace_id", ws)),
       q("workspace_invites", x => x.eq("workspace_id", ws)),
-      q("chat_messages", x => x.eq("workspace_id", ws).order("created_at", { ascending: false }).limit(600))
+      q("chat_messages", x => x.eq("workspace_id", ws).order("created_at", { ascending: false }).limit(600)),
+      q("time_entries", x => x.eq("workspace_id", ws).gte("started_at", since(120)).order("started_at", { ascending: false }).limit(2000)).catch(() => { S.db.time_entries = []; }),
+      q("escalation_rules", x => x.eq("workspace_id", ws).order("created_at")).catch(() => { S.db.escalation_rules = []; })
     ]);
     const ids = [...new Set([S.user.id, ...S.db.workspace_members.map(m => m.user_id)])];
     const { data } = await c.from("profiles").select("*").in("id", ids);
@@ -337,7 +339,7 @@ const demo = {
     S.db.approvals = demoDB.approvals.filter(r => r.requested_by === uid || r.approver_id === uid).map(r => ({ ...r }));
   },
   async loadWorkspace(ws) {
-    WS_TABLES.forEach(t => { S.db[t] = demoDB[t].filter(r => r.workspace_id === ws).map(r => JSON.parse(JSON.stringify(r))); });
+    WS_TABLES.forEach(t => { demoDB[t] = demoDB[t] || []; S.db[t] = demoDB[t].filter(r => r.workspace_id === ws).map(r => JSON.parse(JSON.stringify(r))); });
     const ids = new Set([demoDB._uid, ...S.db.workspace_members.map(m => m.user_id)]);
     S.db.profiles = demoDB.profiles.filter(p => ids.has(p.id)).map(p => ({ ...p }));
     if (!this._listening) { this._listening = true; addEventListener("storage", e => { if (e.key === DKEY) { demoLoad(); this.loadAll().then(() => this.loadWorkspace(S.wsId)).then(emit); } }); }
