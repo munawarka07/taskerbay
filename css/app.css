@@ -910,3 +910,4 @@ small.red,.red{color:var(--red)}
 [dir=rtl] .tl-scroll,[dir=rtl] .fbar,[dir=rtl] .fticks,[dir=rtl] .ins-bars,[dir=rtl] .ins-line,[dir=rtl] .num{direction:ltr}
 [dir=rtl] .tl-scroll{text-align:left}[dir=rtl] .dep .link,[dir=rtl] .tl-name,[dir=rtl] .vnote,[dir=rtl] .tpl-card{text-align:right}
 [dir=rtl] body{font-family:system-ui,-apple-system,"Segoe UI","Noto Sans Arabic","Geeza Pro",Tahoma,sans-serif}
+.inbox-addr{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.inbox-addr code{flex:1;min-width:0;background:var(--surface-2);padding:9px 12px;border-radius:10px;font-size:13.5px;overflow-wrap:anywhere}

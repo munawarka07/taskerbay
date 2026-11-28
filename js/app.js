@@ -413,7 +413,7 @@ function render(animate = false) {
 }
 function go(view, opts = {}) {
   if (!VIEWS[view]) view = "today";
-  if (view === "settings") { U.access = null; U.cal = undefined; U.mfa = undefined; }
+  if (view === "settings") { U.access = null; U.cal = undefined; U.mfa = undefined; U.inbox = undefined; }
   if (view === "activity") U.act = null;
   if (view === "admin") U.adm = undefined; // always show fresh access requests and calendar status
   U.view = view; Object.assign(U, opts);
@@ -1447,6 +1447,7 @@ function vSettings() {
     ${escCard()}
     ${fieldsCard()}
     ${digestCard()}
+    ${inboxCard()}
     ${packsCard()}
     ${mfaCard()}
     ${pushCard()}
@@ -1867,6 +1868,8 @@ document.addEventListener("click", async e => {
   if (act.startsWith("cal-")) { await calendarAction(act, a); return; }
   if (act.startsWith("dg-")) { await digestAction(act, a); return; }
   if (act === "voice") { voiceStart(a); return; }
+  if (act === "ib-copy") { try { await navigator.clipboard.writeText(U.inbox.address); toast("Address copied."); } catch (e) { toast(U.inbox.address); } return; }
+  if (act === "ib-renew") { if (!confirmTap(a, "Tap again: the old address will stop working")) return; try { const r = await api.rpc("my_inbox", { renew: true }); U.inbox = Array.isArray(r) ? r[0] : r; toast("New address ready."); render(); } catch (e) { toast(e.message); } return; }
   if (act === "set-lang") { L.applyLang(a.dataset.v); render(); toast(a.dataset.v === "ar" ? "تم التبديل إلى العربية" : "Switched to English"); return; }
   if (act.startsWith("rg-")) { try { await regionAction(act, a); } catch (e) { toast(e.message); } return; }
   if (act.startsWith("mfa-")) { await mfaAction(act, a); return; }
@@ -3148,6 +3151,17 @@ function fieldsCard() {
     ${fs.length ? `<div class="esc-list">${fs.map(f => `<div class="esc"><span><b>${esc(f.name)}</b> <small class="muted">${{ text: "text", number: "number", date: "date", select: "choice: " + f.options.join(", ") }[f.type]}</small></span>${admin ? `<span class="esc-b"><button class="link" data-action="cf-chip" data-id="${f.id}">${f.show_chip ? "Hide on cards" : "Show on cards"}</button><button class="link danger-t" data-action="cf-del" data-id="${f.id}">Delete</button></span>` : ""}</div>`).join("")}</div>` : ""}
     ${admin ? `<form data-form="cf-add" class="esc-form"><input class="inp" id="cf-name" placeholder="Field name, e.g. Client" maxlength="40" required style="flex:1 1 160px"><select class="inp" id="cf-type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Choice list</option></select>
       <input class="inp" id="cf-opts" placeholder="Choices, comma separated" style="flex:1 1 200px;display:none"><button class="btn" type="submit">Add field</button></form>` : `<p class="muted" style="font-size:12.5px">Only workspace admins can add fields.</p>`}</div>`;
+}
+
+/* ================= Email to TaskerBay ================= */
+function inboxCard() {
+  if (S.mode !== "cloud") return "";
+  if (U.inbox === undefined) { U.inbox = null; api.rpc("my_inbox", { renew: false }).then(r => { U.inbox = (Array.isArray(r) ? r[0] : r) || { enabled: false }; render(); }, () => { U.inbox = { enabled: false }; render(); }); }
+  const x = U.inbox; if (!x?.enabled) return "";
+  return `<div class="card"><div class="card-h"><h2>📧 Email to TaskerBay</h2></div>
+    <p class="muted" style="margin:0 0 10px;font-size:14px">Forward or send an email to your private address and it becomes a task. The subject is the title, the text goes into notes. Attachments are ignored.</p>
+    <div class="inbox-addr"><code>${esc(x.address)}</code><button class="btn ghost" data-action="ib-copy">Copy</button></div>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Only mail sent from <b>${esc(S.user?.email || "your account email")}</b> is accepted. Tip: save it as a contact called “TaskerBay”. <button class="link" data-action="ib-renew">Get a new address</button></p></div>`;
 }
 
 /* ================= Morning email ================= */
