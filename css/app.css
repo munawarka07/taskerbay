@@ -894,3 +894,16 @@ small.red,.red{color:var(--red)}
 .p2>span:last-child{display:grid;min-width:0}.p2 small{color:var(--muted);font-size:12px}.p2.late{border-color:var(--gold)}
 .esc-list{display:grid;gap:6px;margin-bottom:10px}.esc{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:13.5px;background:var(--surface-2);border-radius:10px;padding:8px 10px}.esc.off{opacity:.55}.esc-b{display:flex;gap:10px;flex:none}
 .esc-form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px}.esc-form .inp{width:auto;max-width:100%}
+.pal-understood{font-size:12.5px;color:var(--accent);padding:8px 14px 2px;font-weight:600}
+.ins-tips ul{margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px}
+.ins-bars{display:flex;align-items:flex-end;gap:6px;height:150px}.ib{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%}
+.ib-bars{flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;gap:2px}.ib-bars i{width:40%;border-radius:4px 4px 0 0;min-height:2px}
+.ib-bars i.c,.lg.c{background:var(--line)}.ib-bars i.d,.lg.d{background:var(--accent)}.ib small{font-size:10.5px;color:var(--muted)}
+.lg{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 6px}
+.ins-line{width:100%;height:150px;background:linear-gradient(var(--line) 1px,transparent 1px) 0 0/100% 25%}
+.ins-dow{display:grid;gap:6px}.ins-dow div{display:grid;grid-template-columns:44px 1fr 48px;align-items:center;gap:8px;font-size:13px}.ins-dow i{height:12px;border-radius:6px;background:var(--accent);display:block;min-width:2px}.ins-dow b{text-align:right;font-size:12.5px}
+.vault-lock{max-width:440px}.warn-box{background:color-mix(in srgb,var(--gold) 14%,transparent);border-radius:10px;padding:10px 12px;font-size:13px;margin:4px 0 12px}
+.vnote{display:grid;grid-template-columns:1fr auto;gap:2px 10px;text-align:left;width:100%;background:none;border:0;border-top:1px solid var(--line);padding:10px 4px;font:inherit;color:var(--ink);cursor:pointer}
+.vnote:first-child{border-top:0}.vnote small{grid-column:1;color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vnote em{grid-row:1;grid-column:2;font-style:normal;font-size:12px;color:var(--muted)}
+#v-body{margin-top:8px;font-family:inherit;line-height:1.5}
+.cf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0 10px}

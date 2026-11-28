@@ -7,11 +7,11 @@ export const PK = {
   routine_items: ["id"], routine_logs: ["item_id", "day"], journal: ["user_id", "day"], focus_sessions: ["id"],
   expenses: ["id"], budgets: ["user_id", "category"],
   chat_messages: ["id"], chat_reads: ["user_id", "workspace_id", "room"],
-  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"], task_templates: ["id"], approvals: ["id"], time_entries: ["id"], escalation_rules: ["id"]
+  fund_projects: ["id"], fund_members: ["id"], fund_entries: ["id"], calendar_events: ["id"], task_templates: ["id"], approvals: ["id"], time_entries: ["id"], escalation_rules: ["id"], custom_fields: ["id"], private_notes: ["id"]
 };
 const TABLES = Object.keys(PK);
-const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages", "time_entries", "escalation_rules"];
-const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads", "calendar_events", "task_templates"];
+const WS_TABLES = ["workflows", "tasks", "task_updates", "automations", "workspace_members", "workspace_invites", "chat_messages", "time_entries", "escalation_rules", "custom_fields"];
+const USER_TABLES = ["routine_items", "routine_logs", "journal", "focus_sessions", "expenses", "budgets", "notifications", "chat_reads", "calendar_events", "task_templates", "private_notes"];
 // shared money funds: visible to the creator and the people added to them (the server decides who sees what)
 const FUND_TABLES = ["fund_projects", "fund_members", "fund_entries"];
 // approval requests: visible to the person who asked and the approver (the server decides)
@@ -94,6 +94,7 @@ const cloud = {
       q("chat_reads", x => x.eq("user_id", uid)),
       q("calendar_events", x => x.eq("user_id", uid).order("start_at").limit(3000)).catch(() => { S.db.calendar_events = []; }),
       q("task_templates", x => x.eq("user_id", uid).order("created_at")).catch(() => { S.db.task_templates = []; }),
+      q("private_notes", x => x.eq("user_id", uid).order("updated_at", { ascending: false })).catch(() => { S.db.private_notes = []; }),
       q("fund_projects", x => x.order("created_at", { ascending: false })),
       q("approvals", x => x.order("created_at", { ascending: false }).limit(500)).catch(() => { S.db.approvals = []; }),
       q("fund_members", x => x.order("created_at")),
@@ -112,7 +113,8 @@ const cloud = {
       q("workspace_invites", x => x.eq("workspace_id", ws)),
       q("chat_messages", x => x.eq("workspace_id", ws).order("created_at", { ascending: false }).limit(600)),
       q("time_entries", x => x.eq("workspace_id", ws).gte("started_at", since(120)).order("started_at", { ascending: false }).limit(2000)).catch(() => { S.db.time_entries = []; }),
-      q("escalation_rules", x => x.eq("workspace_id", ws).order("created_at")).catch(() => { S.db.escalation_rules = []; })
+      q("escalation_rules", x => x.eq("workspace_id", ws).order("created_at")).catch(() => { S.db.escalation_rules = []; }),
+      q("custom_fields", x => x.eq("workspace_id", ws).order("position")).catch(() => { S.db.custom_fields = []; })
     ]);
     const ids = [...new Set([S.user.id, ...S.db.workspace_members.map(m => m.user_id)])];
     const { data } = await c.from("profiles").select("*").in("id", ids);

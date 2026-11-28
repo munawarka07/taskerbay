@@ -397,7 +397,7 @@ function renderChrome() {
 }
 
 /* ================= Routing & render ================= */
-const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, funds: vFunds, approvals: vApprovals, timeline: vTimeline, report: vReport, activity: vActivity, admin: vAdmin, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
+const VIEWS = { chat: vChat, today: vToday, plan: vPlan, tasks: vTasks, routine: vRoutine, money: vMoney, funds: vFunds, approvals: vApprovals, timeline: vTimeline, insights: vInsights, notes: vNotesView, report: vReport, activity: vActivity, admin: vAdmin, focus: vFocus, team: vTeam, workflows: vWorkflows, automations: vAutomations, inbox: vInbox, settings: vSettings, more: vMore };
 function render(animate = false) {
   if (!S.ready) return;
   renderChrome();
@@ -445,6 +445,7 @@ function taskRow(t, opts = {}) {
   if (pg) chips.push(`<span class="chip subbar">${pg.done}/${pg.total}<span><i style="width:${pg.pct * 100}%"></i></span></span>`);
   chips.push(`<span class="chip dot" style="--c:${AREA_C[t.area] || "var(--muted)"}">${esc(t.area)}</span>`);
   if (t.repeat) chips.push(`<span class="chip">${I.repeat} ${esc(E.repeatLabel(t.repeat))}</span>`);
+  chips.push(...cfChips(t));
   if (!done) { const w = waitingOn(t); if (w.length) chips.push(`<span class="chip warn" title="Waiting on: ${esc(w.map(x => x.title).join(", "))}">🔒 Waiting on ${w.length}</span>`); }
   { const tm = trackedMin(t.id); if (tm) chips.push(`<span class="chip">⏱ ${durTxt(tm)}</span>`); if (runningEntry()?.task_id === t.id) chips.push(`<span class="chip ok">● Timer on</span>`); }
   { const cu = chatUnread(t.id); if (cu) chips.push(`<span class="chip chat-chip">💬 ${cu}</span>`); }
@@ -741,6 +742,7 @@ function refreshTaskSheet(first) {
       ${members.length > 1 ? `<div class="field"><label for="tf-as">Assigned to</label><select class="inp" id="tf-as" data-tfield="assignee_id"><option value="">Nobody</option>${members.map(u => `<option value="${u}" ${t.assignee_id === u ? "selected" : ""}>${esc(nameOf(u))}${u === me() ? " (me)" : ""}</option>`).join("")}</select></div>` : ""}
       <div class="field"><label for="tf-est">Takes (minutes)</label><input class="inp" type="number" min="0" step="5" id="tf-est" data-tfield="estimate_min" value="${t.estimate_min ?? ""}" inputmode="numeric"></div>
     </div>
+    ${customInputs(t)}
     ${depsField(t)}
     ${timeField(t)}
     <div class="field"><label for="tf-notes">Notes</label><textarea class="inp" id="tf-notes" data-tfield="notes" placeholder="Details, links, decisions…">${esc(t.notes)}</textarea></div>
@@ -1429,7 +1431,7 @@ function vInbox() {
   <div class="list">${list.map(n => `<div class="notif ${n.read ? "" : "unread"}" data-action="notif" data-id="${n.id}">${avatar(n.actor_id, true)}<div><p>${esc(n.body)}</p><small>${timeAgo(n.created_at)}${n.workspace_id && n.workspace_id !== S.wsId ? ` · ${esc(S.db.workspaces.find(w => w.id === n.workspace_id)?.name || "")}` : ""}</small></div></div>`).join("") || emptyBox("All quiet", "Assignments, status changes and updates from your team appear here.", I.bell)}</div>`;
 }
 function vMore() {
-  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending, budgets & funds"], ["funds", "🤝", "Funds", fundsWaiting() ? `${fundsWaiting()} waiting for you` : "Event & project budgets"], ["approvals", "✅", "Approvals", apprWaiting() ? `${apprWaiting()} waiting for you` : "Ask, approve, keep a record"], ["report", "📈", "Weekly report", "What got done, what slipped · PDF"], ["timeline", "📅", "Timeline", "Tasks laid out by day, with dependencies"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["activity", "🧾", "Activity log", "Who changed what, and when"], ["settings", "⚙️", "Settings", "Profile, theme, install"], ...(U.isAdmin ? [["admin", "🛡️", "Admin", "Users, sign-ins, trials"]] : [])];
+  const H = [["routine", "🔁", "Routine", "Daily habits & streaks"], ["money", "💰", "Money", "Spending, budgets & funds"], ["funds", "🤝", "Funds", fundsWaiting() ? `${fundsWaiting()} waiting for you` : "Event & project budgets"], ["approvals", "✅", "Approvals", apprWaiting() ? `${apprWaiting()} waiting for you` : "Ask, approve, keep a record"], ["report", "📈", "Weekly report", "What got done, what slipped · PDF"], ["timeline", "📅", "Timeline", "Tasks laid out by day, with dependencies"], ["insights", "📊", "Insights", "Trends, on-time rate, where time goes"], ["notes", "🔐", "Private notes", "Encrypted with your own passphrase"], ["focus", "⏱", "Focus", "25-minute sessions"], ["team", "👥", "Team & updates", "People, invites, feed"], ["chat", "💬", "Team chat", isTeam() ? (chatUnreadAll() ? `${chatUnreadAll()} unread` : "Talk with your workspace") : "For shared workspaces"], ["workflows", "🔀", "Workflows", "Stages tasks move through"], ["automations", "⚡", "Automations", "Rules that run themselves"], ["inbox", "🔔", "Inbox", `${unread()} unread`], ["activity", "🧾", "Activity log", "Who changed what, and when"], ["settings", "⚙️", "Settings", "Profile, theme, install"], ...(U.isAdmin ? [["admin", "🛡️", "Admin", "Users, sign-ins, trials"]] : [])];
   return `<div class="view-h"><div><h1>More</h1><p>Everything else in TaskerBay</p></div></div><div class="hub">${H.map(([k, i, l, s]) => `<button data-go="${k}"><span class="ic">${i}</span><b>${l}</b><small>${s}</small></button>`).join("")}</div>`;
 }
 function vSettings() {
@@ -1442,6 +1444,7 @@ function vSettings() {
     ${calendarCard()}
     ${regionCard()}
     ${escCard()}
+    ${fieldsCard()}
     ${digestCard()}
     ${packsCard()}
     ${mfaCard()}
@@ -1698,11 +1701,12 @@ function renderPalette(q) {
     AI_ON && ["✨", "Just say it (AI)", "capture ai", () => captureSheet()], AI_ON && ["🗓️", "Plan my day (AI)", "ai schedule", () => { go("today"); aiPlan(); }],
     ...NAV.map(([k, l]) => ["→", `Go to ${l}`, k, () => go(k)]), ["🌓", "Switch theme", "dark light", cycleTheme], ["👥", "Invite someone", "team member", () => { go("team"); inviteSheet(); }]]
     .filter(Boolean).map(([ico, l, k, run]) => ({ ico, l, k, run })).filter(a => !q || (a.l + " " + a.k).toLowerCase().includes(q));
-  const ts = q ? S.db.tasks.filter(t => (t.title + " " + t.notes).toLowerCase().includes(q)).slice(0, 10).map(t => ({ ico: E.isDone(t) ? "☑️" : "⬜", l: t.title, sub: t.parent_id ? "step" : (t.due_date ? dueLabel(t) : E.stageOf(t).name), run: () => openTask(t.id) })) : [];
+  const sq = q ? smartQuery(q) : null;
+  const ts = q ? S.db.tasks.filter(t => smartMatch(t, sq)).slice(0, 25).map(t => ({ ico: E.isDone(t) ? "☑️" : waitingOn(t).length ? "🔒" : "⬜", l: t.title, sub: (t.parent_id ? "step · " : "") + (E.isDone(t) && t.completed_at ? "done " + timeAgo(t.completed_at) : t.due_date ? dueLabel(t) : E.stageOf(t).name) + (isTeam() && (t.assignee_id || t.created_by) ? " · " + nameOf(t.assignee_id || t.created_by).split(" ")[0] : ""), run: () => openTask(t.id) })) : [];
   const xs = q ? S.db.expenses.filter(x => (x.title + " " + x.category + " " + x.note).toLowerCase().includes(q)).slice(0, 5).map(x => ({ ico: CATS[x.category]?.[0] || "💸", l: x.title, sub: `${x.flow === "in" ? "+" : "−"}${nf2.format(x.amount)} · ${x.date}`, run: () => expenseSheet(x) })) : [];
   palItems = [...ts, ...xs, ...acts]; palSel = 0;
   const sec = (t, arr, off) => arr.length ? `<div class="pal-sec">${t}</div>` + arr.map((a, i) => `<button class="pal-item ${off + i === 0 ? "sel" : ""}" data-pi="${off + i}"><span class="ico">${a.ico}</span><span>${esc(a.l)}</span>${a.sub ? `<small>${esc(a.sub)}</small>` : ""}</button>`).join("") : "";
-  $("#pal-list").innerHTML = (sec("Tasks", ts, 0) + sec("Money", xs, ts.length) + sec("Actions", acts, ts.length + xs.length)) || `<div class="pal-sec">No matches</div>`;
+  $("#pal-list").innerHTML = (sq && sq.tags.length > 1 || (sq && sq.tags.length && !sq.words.length) ? `<div class="pal-understood">Showing: ${esc(sq.tags.join(" · "))}</div>` : "") + (sec(`Tasks${ts.length ? ` (${ts.length}${ts.length === 25 ? "+" : ""})` : ""}`, ts, 0) + sec("Money", xs, ts.length) + sec("Actions", acts, ts.length + xs.length)) || `<div class="pal-sec">No matches</div>`;
 }
 $("#pal-input").addEventListener("input", e => renderPalette(e.target.value));
 $("#pal-input").addEventListener("keydown", e => {
@@ -1870,6 +1874,13 @@ document.addEventListener("click", async e => {
   if (act === "tm-stop") { try { await tmStop(); } catch (e) { toast(e.message); } return; }
   if (act === "tm-del") { const e0 = (S.db.time_entries || []).find(x => x.id === a.dataset.v); if (e0) { try { await remove("time_entries", e0); } catch (e) { toast(e.message); } } return; }
   if (act === "tl-span") { U.tlSpan = +a.dataset.v; render(); return; }
+  if (act === "ins-all") { U.insAll = a.dataset.v === "1"; render(); return; }
+  if (act === "v-lock") { VK = null; for (const k in vNotes) delete vNotes[k]; U.vOpen = undefined; render(); return; }
+  if (act === "v-new") { U.vOpen = "new"; render(); setTimeout(() => $("#v-title")?.focus(), 50); return; }
+  if (act === "v-openn") { U.vOpen = a.dataset.id; render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+  if (act === "v-close") { U.vOpen = undefined; render(); return; }
+  if (act === "v-del") { const n = (S.db.private_notes || []).find(x => x.id === a.dataset.id); if (n && confirmTap(a, "Tap again to delete")) { await remove("private_notes", n); U.vOpen = undefined; toast("Note deleted."); render(); } return; }
+  if (act === "cf-del" || act === "cf-chip") { const f = (S.db.custom_fields || []).find(x => x.id === a.dataset.id); if (!f) return; if (act === "cf-del" && !confirmTap(a, "Tap again to delete")) return; try { act === "cf-del" ? await remove("custom_fields", f) : await update("custom_fields", f, { show_chip: !f.show_chip }); } catch (e) { toast(e.message); } render(); return; }
   if (act === "plan-week") { planSheet(); return; }
   if (act === "esc-toggle" || act === "esc-del") { const r = (S.db.escalation_rules || []).find(x => x.id === a.dataset.id); if (!r) return; try { act === "esc-del" ? await remove("escalation_rules", r) : await update("escalation_rules", r, { active: !r.active }); } catch (e) { toast(e.message); } render(); return; }
   if (act === "rep-pdf") { a.disabled = true; try { await reportPdf(); } catch (e) { toast("Couldn't make the PDF: " + (e.message || e)); } a.disabled = false; return; }
@@ -2021,6 +2032,10 @@ document.addEventListener("click", async e => {
 function reopenAuto() { const s = U.sheet; autoSheet(s.a, s.isNew); }
 
 document.addEventListener("change", async e => {
+  if (e.target.id === "cf-type") { const o = $("#cf-opts"); if (o) o.style.display = e.target.value === "select" ? "" : "none"; return; }
+  if (e.target.dataset?.cf) { const t = task(e.target.dataset.task), f = (S.db.custom_fields || []).find(x => x.id === e.target.dataset.cf); if (!t || !f) return; let v = e.target.value.trim();
+    if (f.type === "number" && v) { const n = parseFloat(v.replace(/,/g, "")); if (isNaN(n)) return toast("That's not a number."); v = n; }
+    const c = { ...(t.custom || {}) }; if (v === "") delete c[f.id]; else c[f.id] = v; try { await E.changeTask(t, { custom: c }); } catch (err) { toast(err.message); } return; }
   if (e.target.id === "dep-add" && e.target.value) { const t = task(e.target.dataset.id); if (t) await depSet(t, [...(t.blocked_by || []), e.target.value]); return; }
   if (e.target.id === "rg-c") { const c = e.target.value; try { await saveRegion({ region: c, work_days: CAL.defaultWorkDays(c) }); toast(`Using ${CAL.countryName(c)}'s weekend and holidays.`); } catch (err) { toast(err.message); } return; }
   if (e.target.dataset?.hol) { const d = e.target.dataset.hol, p = { off: [], add: [], ...holPrefs() }; const set = new Set(p.off); e.target.checked ? set.delete(d) : set.add(d); p.off = [...set]; try { await saveRegion({ holiday_prefs: p }); } catch (err) { toast(err.message); } return; }
@@ -2091,6 +2106,10 @@ document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind?.startsWith("fd-")) { await fundSubmit(kind, f, e); return; }
   if (kind === "tpl") { await tplCreate(f); return; }
+  if (kind?.startsWith("v-")) { try { await vaultSubmit(kind, f); } catch (err) { toast(err.message || "Something went wrong."); } return; }
+  if (kind === "cf-add") { const name = $("#cf-name").value.trim(), type = $("#cf-type").value, options = type === "select" ? $("#cf-opts").value.split(",").map(x => x.trim()).filter(Boolean).slice(0, 30) : [];
+    if (type === "select" && !options.length) return toast("Add the choices, separated by commas.");
+    try { await insert("custom_fields", { id: uuid(), workspace_id: S.wsId, name, type, options, show_chip: true, position: cFields().length, created_at: new Date().toISOString() }); toast(`Added “${name}”.`); render(); } catch (err) { toast(err.message); } return; }
   if (kind === "tm-add") { const m = parseInt($("#tm-min").value, 10); if (!(m > 0 && m <= 1440)) return toast("Enter minutes, 1 to 1440."); const t = task(f.dataset.id); try { await insert("time_entries", { id: uuid(), user_id: me(), workspace_id: t?.workspace_id || S.wsId, task_id: f.dataset.id, started_at: new Date(Date.now() - m * 6e4).toISOString(), ended_at: new Date().toISOString(), minutes: m, note: "", created_at: new Date().toISOString() }); toast(`Added ${durTxt(m)}.`); render(); } catch (err) { toast(err.message); } return; }
   if (kind === "plan2") { const picks = [...f.querySelectorAll("input[data-i]:checked")].map(x => U.plan2[+x.dataset.i]); const b = f.querySelector("[type=submit]"); b.disabled = true;
     try { for (const p of picks) await E.changeTask(p.t, { due_date: p.k, due_time: minT(p.s) + ":00", estimate_min: p.t.estimate_min || p.need }); closeSheet(); toast(`Scheduled ${picks.length} task${picks.length === 1 ? "" : "s"}.`); } catch (err) { b.disabled = false; toast(err.message); } return; }
@@ -2962,6 +2981,171 @@ function escCard() {
   </div>`;
 }
 
+/* ================= Smart search ================= */
+// understands plain questions: "overdue tasks for Sara", "what did I finish last month", "high priority this week", "waiting tasks", "payroll in november"
+function smartQuery(q0) {
+  let q = " " + q0.toLowerCase().replace(/[?!.,]/g, " ").replace(/\s+/g, " ") + " ";
+  const f = { tags: [] }, take = (re, fn) => { const m = q.match(re); if (m) { q = q.replace(m[0], " "); fn(m); return true; } return false; };
+  const today = parseKey(dkey()), mon = d => addDays(d, -((d.getDay() + 6) % 7));
+  const range = (a, b, l) => { f.from = dkey(a); f.to = dkey(b); f.tags.push(l); };
+  take(/ (what did i |things i |tasks i )?(finish|finished|complete|completed|done|did) /, () => { f.done = true; f.tags.push("finished"); });
+  take(/ (overdue|late|missed) /, () => { f.overdue = true; f.tags.push("overdue"); });
+  take(/ (open|pending|not done|unfinished|to do|todo) /, () => { f.open = true; f.tags.push("open"); });
+  take(/ (blocked|waiting|waiting on others|stuck) /, () => { f.blocked = true; f.tags.push("waiting on another task"); });
+  take(/ (high priority|urgent|important|high) /, () => { f.pri = "High"; f.tags.push("high priority"); });
+  take(/ (starred|favourite|favorite) /, () => { f.star = true; f.tags.push("starred"); });
+  take(/ (today) /, () => range(today, today, "today")) || take(/ (tomorrow) /, () => range(addDays(today, 1), addDays(today, 1), "tomorrow")) || take(/ (yesterday) /, () => range(addDays(today, -1), addDays(today, -1), "yesterday"))
+    || take(/ (this week) /, () => range(mon(today), addDays(mon(today), 6), "this week")) || take(/ (next week) /, () => range(addDays(mon(today), 7), addDays(mon(today), 13), "next week"))
+    || take(/ (last week) /, () => range(addDays(mon(today), -7), addDays(mon(today), -1), "last week"))
+    || take(/ (this month) /, () => range(new Date(today.getFullYear(), today.getMonth(), 1), new Date(today.getFullYear(), today.getMonth() + 1, 0), "this month"))
+    || take(/ (last month) /, () => range(new Date(today.getFullYear(), today.getMonth() - 1, 1), new Date(today.getFullYear(), today.getMonth(), 0), "last month"))
+    || take(/ (next month) /, () => range(new Date(today.getFullYear(), today.getMonth() + 1, 1), new Date(today.getFullYear(), today.getMonth() + 2, 0), "next month"))
+    || take(/ (?:in )?(january|february|march|april|may|june|july|august|september|october|november|december) /, m => { const mi = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"].indexOf(m[1]); let y = today.getFullYear(); if (mi > today.getMonth() + 1) y--; range(new Date(y, mi, 1), new Date(y, mi + 1, 0), m[1][0].toUpperCase() + m[1].slice(1)); });
+  take(/ (mine|my tasks|assigned to me|for me|by me|i ) /, () => { f.who = me(); f.tags.push("you"); });
+  for (const m of S.db.workspace_members) { if (m.user_id === me()) continue; const first = nameOf(m.user_id).split(" ")[0].toLowerCase(); if (first.length < 2) continue;
+    if (take(new RegExp(` (?:for |with |by |assigned to |waiting on |from )?${first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:'s)? `), () => {})) { f.who = m.user_id; f.tags.push(nameOf(m.user_id)); break; } }
+  for (const a of AREAS) take(new RegExp(` (?:in )?${a.toLowerCase()} `), () => { f.area = a; f.tags.push(a); });
+  const words = q.replace(/ (show|me|find|all|the|tasks?|items?|things|what|which|are|is|was|were|did|do|i|my|for|in|on|of|with|to|a|an|and|any|from|that|have|has|by) /g, " ").replace(/ (show|me|find|all|the|tasks?|items?|things|what|which|are|is|was|were|did|do|i|my|for|in|on|of|with|to|a|an|and|any|from|that|have|has|by) /g, " ").trim().split(/\s+/).filter(w => w.length > 1);
+  f.words = words; if (words.length) f.tags.push(`“${words.join(" ")}”`);
+  return f;
+}
+function smartMatch(t, f) {
+  const done = E.isDone(t);
+  if (f.done && !done) return false; if ((f.open || f.overdue || f.blocked) && done) return false;
+  if (f.overdue && E.dueStatus(t) !== "overdue") return false;
+  if (f.blocked && !waitingOn(t).length) return false;
+  if (f.pri && t.priority !== f.pri) return false; if (f.star && !t.starred) return false; if (f.area && t.area !== f.area) return false;
+  if (f.who && !(t.assignee_id === f.who || (!t.assignee_id && t.created_by === f.who))) return false;
+  if (f.from) { const k = f.done && t.completed_at ? dkey(new Date(t.completed_at)) : t.due_date; if (!k || k < f.from || k > f.to) return false; }
+  if (f.words?.length) { const hay = (t.title + " " + (t.notes || "") + " " + (t.status_note || "") + " " + S.db.task_updates.filter(u => u.task_id === t.id).map(u => u.body || "").join(" ") + " " + Object.values(t.custom || {}).join(" ")).toLowerCase(); if (!f.words.every(w => hay.includes(w))) return false; }
+  return true;
+}
+
+/* ================= Insights ================= */
+function vInsights() {
+  const weeks = 8, today = parseKey(dkey()), mon = addDays(today, -((today.getDay() + 6) % 7));
+  const W = [...Array(weeks)].map((_, i) => { const a = addDays(mon, -7 * (weeks - 1 - i)), b = addDays(a, 6); return { a, b, ak: dkey(a), bk: dkey(b) }; });
+  const mine = t => !isTeam() || U.insAll || t.assignee_id === me() || (!t.assignee_id && t.created_by === me());
+  const ts = S.db.tasks.filter(mine);
+  const per = W.map(w => { const d = ts.filter(t => t.completed_at && dkey(new Date(t.completed_at)) >= w.ak && dkey(new Date(t.completed_at)) <= w.bk); const dated = d.filter(t => t.due_date); const ontime = dated.filter(t => dkey(new Date(t.completed_at)) <= t.due_date).length;
+    const created = ts.filter(t => t.created_at && dkey(new Date(t.created_at)) >= w.ak && dkey(new Date(t.created_at)) <= w.bk).length; return { ...w, done: d.length, created, rate: dated.length ? Math.round(ontime / dated.length * 100) : null }; });
+  const dowN = [0, 0, 0, 0, 0, 0, 0], hourN = Array(24).fill(0);
+  ts.filter(t => t.completed_at && new Date(t.completed_at) > addDays(today, -56)).forEach(t => { const d = new Date(t.completed_at); dowN[d.getDay()]++; hourN[d.getHours()]++; });
+  const areaMin = {}; (S.db.time_entries || []).filter(e => e.ended_at && new Date(e.started_at) > addDays(today, -28) && (U.insAll || e.user_id === me())).forEach(e => { const a = task(e.task_id)?.area || "Other"; areaMin[a] = (areaMin[a] || 0) + (e.minutes || 0); });
+  const open = ts.filter(t => !E.isDone(t)), overdue = open.filter(t => E.dueStatus(t) === "overdue"), noDate = open.filter(t => !t.due_date && !t.parent_id);
+  const age = open.length ? Math.round(open.reduce((s, t) => s + (Date.now() - new Date(t.created_at || Date.now())) / 864e5, 0) / open.length) : 0;
+  const lastRate = per.filter(p => p.rate != null).slice(-4), avgRate = lastRate.length ? Math.round(lastRate.reduce((s, p) => s + p.rate, 0) / lastRate.length) : null;
+  const maxDone = Math.max(1, ...per.map(p => Math.max(p.done, p.created)));
+  const bars = per.map(p => `<div class="ib"><div class="ib-bars"><i class="c" style="height:${p.created / maxDone * 100}%" title="${p.created} added"></i><i class="d" style="height:${p.done / maxDone * 100}%" title="${p.done} done"></i></div><small>${p.a.getDate()}/${p.a.getMonth() + 1}</small></div>`).join("");
+  const rateLine = (() => { const pts = per.map((p, i) => p.rate == null ? null : [i * (300 / (weeks - 1)), 100 - p.rate]).filter(Boolean); return pts.length > 1 ? `<svg viewBox="-6 -6 312 112" class="ins-line" preserveAspectRatio="none"><polyline points="${pts.map(p => p.join(",")).join(" ")}" fill="none" stroke="var(--accent)" stroke-width="3" vector-effect="non-scaling-stroke"/>${pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="var(--accent)"/>`).join("")}</svg>` : `<p class="muted" style="font-size:13px">Needs a few weeks of tasks with due dates.</p>`; })();
+  const maxDow = Math.max(1, ...dowN), dn = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const peakH = hourN.indexOf(Math.max(...hourN)), totalArea = Object.values(areaMin).reduce((a, b) => a + b, 0);
+  const tips = [];
+  if (overdue.length >= 3) tips.push(`${overdue.length} tasks are overdue. Try ✨ Plan my week in the Planner to give them slots.`);
+  if (noDate.length >= 5) tips.push(`${noDate.length} open tasks have no date. Undated tasks are the ones that slip.`);
+  if (avgRate != null && avgRate < 70) tips.push(`On-time rate is ${avgRate}% over the last 4 weeks. Smaller steps with their own dates usually help.`);
+  if (per.slice(-4).reduce((s, p) => s + p.created - p.done, 0) > 6) tips.push("You're adding tasks faster than you finish them. Worth a weekly review.");
+  if (Math.max(...hourN) > 2) tips.push(`You finish the most around ${fmt12(peakH * 60)}. Protect that time for important work.`);
+  return `<div class="view-h"><div><h1>Insights</h1><p>The last 8 weeks${isTeam() ? (U.insAll ? " · whole workspace" : " · your tasks") : ""}</p></div>${isTeam() ? `<div class="seg"><button class="${U.insAll ? "" : "on"}" data-action="ins-all" data-v="0">Mine</button><button class="${U.insAll ? "on" : ""}" data-action="ins-all" data-v="1">Everyone</button></div>` : ""}</div>
+  <div class="grid g-stats" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:14px">
+    <div class="card stat" style="--c:var(--green)"><div class="k"><i></i>On time</div><div class="v num">${avgRate == null ? "–" : avgRate + "%"}</div><div class="s">last 4 weeks</div></div>
+    <div class="card stat" style="--c:var(--red)"><div class="k"><i></i>Overdue</div><div class="v num">${overdue.length}</div><div class="s">of ${open.length} open</div></div>
+    <div class="card stat" style="--c:var(--gold)"><div class="k"><i></i>No date</div><div class="v num">${noDate.length}</div><div class="s">open, undated</div></div>
+    <div class="card stat" style="--c:var(--accent)"><div class="k"><i></i>Average age</div><div class="v num">${age}d</div><div class="s">of open tasks</div></div>
+  </div>
+  ${tips.length ? `<div class="card ins-tips"><div class="card-h"><h2>💡 Worth knowing</h2></div><ul>${tips.map(t => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
+  <div class="grid g-2">
+    <div class="card"><div class="card-h"><h2>Added vs done</h2><span class="sub"><i class="lg c"></i>added <i class="lg d"></i>done</span></div><div class="ins-bars">${bars}</div></div>
+    <div class="card"><div class="card-h"><h2>On-time rate</h2><span class="sub">per week</span></div>${rateLine}</div>
+    <div class="card"><div class="card-h"><h2>Busiest days</h2><span class="sub">tasks finished</span></div><div class="ins-dow">${[1, 2, 3, 4, 5, 6, 0].map(d => `<div><span>${dn[d]}</span><i style="width:${dowN[d] / maxDow * 100}%"></i><b>${dowN[d]}</b></div>`).join("")}</div></div>
+    <div class="card"><div class="card-h"><h2>Where time went</h2><span class="sub">last 4 weeks</span></div>${totalArea ? `<div class="ins-dow">${Object.entries(areaMin).sort((a, b) => b[1] - a[1]).map(([a, m]) => `<div><span>${esc(a)}</span><i style="width:${m / totalArea * 100}%;background:${AREA_C[a] || "var(--accent)"}"></i><b>${durTxt(m)}</b></div>`).join("")}</div>` : `<p class="muted" style="font-size:13px">Start a timer on a task (▶ in the task) to see this.</p>`}</div>
+  </div>`;
+}
+
+// two-tap confirm without browser dialogs
+function confirmTap(btn, label) { if (btn.dataset.armed) return true; const old = btn.textContent; btn.dataset.armed = "1"; btn.textContent = label; setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = old; } }, 3000); return false; }
+/* ================= Private notes (encrypted on this device) ================= */
+// AES-256-GCM with a key from the person's passphrase (PBKDF2-SHA256, 310k rounds). The key never leaves the device;
+// TaskerBay's server and database only see scrambled text. A forgotten passphrase cannot be recovered.
+const b64 = u8 => btoa(String.fromCharCode(...new Uint8Array(u8))), unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function vaultKey(pass, saltB64) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: unb64(saltB64), iterations: 310000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+async function vEnc(key, obj) { const iv = crypto.getRandomValues(new Uint8Array(12)); const c = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(obj))); return { iv: b64(iv), cipher: b64(c) }; }
+async function vDec(key, iv, cipher) { const p = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv) }, key, unb64(cipher)); return JSON.parse(new TextDecoder().decode(p)); }
+const vaultMeta = () => profile(me())?.vault || (() => { try { return JSON.parse(localStorage.getItem("tb.vault") || "null"); } catch (e) { return null; } })();
+let VK = null, VLOCK = null; const vNotes = {};
+function vTouch() { clearTimeout(VLOCK); VLOCK = setTimeout(() => { VK = null; for (const k in vNotes) delete vNotes[k]; if (U.view === "notes") render(); }, 10 * 60e3); }
+async function vDecryptAll() { for (const n of S.db.private_notes || []) { if (vNotes[n.id]?.u === n.updated_at) continue; try { vNotes[n.id] = { ...(await vDec(VK, n.iv, n.cipher)), u: n.updated_at }; } catch (e) { vNotes[n.id] = { title: "⚠️ Can't open this note", body: "", u: n.updated_at, bad: true }; } } }
+function vNotesView() {
+  const meta = vaultMeta();
+  if (!window.crypto?.subtle) return `<div class="view-h"><div><h1>Private notes</h1></div></div>${emptyBox("Not supported here", "This browser can't encrypt. Open TaskerBay in an up-to-date Safari or Chrome.")}`;
+  if (!VK) return `<div class="view-h"><div><h1>🔐 Private notes</h1><p>Locked with your own passphrase. Not even TaskerBay can read them.</p></div></div>
+    <div class="card vault-lock"><form data-form="${meta ? "v-open" : "v-new"}" autocomplete="off">
+      ${meta ? `<div class="field"><label for="v-pass">Passphrase</label><input class="inp" type="password" id="v-pass" required autocomplete="current-password" autofocus></div><button class="btn" type="submit" style="width:100%">Unlock</button>`
+        : `<p style="margin:0 0 10px;font-size:14px">Choose a passphrase for your private notes. It's separate from your sign-in password.</p>
+        <div class="field"><label for="v-pass">New passphrase <span class="muted">(at least 10 characters)</span></label><input class="inp" type="password" id="v-pass" required minlength="10" autocomplete="new-password"></div>
+        <div class="field"><label for="v-pass2">Type it again</label><input class="inp" type="password" id="v-pass2" required minlength="10" autocomplete="new-password"></div>
+        <p class="warn-box">⚠️ If you forget it, these notes can't be opened by anyone, including the admin. Write it down somewhere safe.</p>
+        <button class="btn" type="submit" style="width:100%">Create my private notes</button>`}
+      <p class="muted" id="v-msg" style="font-size:13px;margin:8px 0 0"></p></form></div>`;
+  vTouch();
+  const list = (S.db.private_notes || []).map(n => ({ n, d: vNotes[n.id] })).filter(x => x.d).sort((a, b) => b.n.updated_at.localeCompare(a.n.updated_at));
+  const open = U.vOpen && (S.db.private_notes || []).find(n => n.id === U.vOpen);
+  return `<div class="view-h"><div><h1>🔐 Private notes</h1><p>${list.length} note${list.length === 1 ? "" : "s"} · locks itself after 10 minutes</p></div><div style="display:flex;gap:8px"><button class="btn ghost" data-action="v-lock">Lock</button><button class="btn" data-action="v-new">＋ Note</button></div></div>
+  ${U.vOpen !== undefined && (open || U.vOpen === "new") ? `<div class="card"><form data-form="v-save" data-id="${open ? open.id : ""}"><input class="title-inp" id="v-title" placeholder="Title" maxlength="200" value="${esc(open ? vNotes[open.id]?.title || "" : "")}"><textarea class="inp" id="v-body" rows="12" placeholder="Write anything. It's encrypted before it leaves this device.">${esc(open ? vNotes[open.id]?.body || "" : "")}</textarea>
+    <div class="sheet-actions">${open ? `<button type="button" class="btn ghost danger-t" data-action="v-del" data-id="${open.id}">Delete</button>` : ""}<button type="button" class="btn ghost" data-action="v-close">Close</button><button class="btn" type="submit">Save</button></div></form></div>` : ""}
+  ${list.length ? `<div class="list">${list.map(({ n, d }) => `<button class="vnote" data-action="v-openn" data-id="${n.id}"><b>${esc(d.title || "Untitled")}</b><small>${esc((d.body || "").slice(0, 90))}</small><em>${timeAgo(n.updated_at)}</em></button>`).join("")}</div>` : U.vOpen === undefined ? emptyBox("No private notes yet", "Tap ＋ Note. Good for passwords hints, salary details, personal matters.") : ""}`;
+}
+async function vaultSubmit(kind, f) {
+  const msg = $("#v-msg"), b = f.querySelector("[type=submit]");
+  if (kind === "v-new") {
+    const p1 = $("#v-pass").value, p2 = $("#v-pass2").value;
+    if (p1.length < 10) return (msg.textContent = "Use at least 10 characters."); if (p1 !== p2) return (msg.textContent = "The two passphrases don't match.");
+    b.disabled = true; b.textContent = "Setting up…";
+    const salt = b64(crypto.getRandomValues(new Uint8Array(16))), key = await vaultKey(p1, salt), check = await vEnc(key, { ok: "taskerbay" });
+    const meta = { v: 1, salt, check }; try { localStorage.setItem("tb.vault", JSON.stringify(meta)); } catch (e) {}
+    const pr = profile(me()); if (pr) localUpsert("profiles", { ...pr, vault: meta });
+    if (S.mode === "cloud") await api.updateProfile({ vault: meta });
+    VK = key; render(); return;
+  }
+  if (kind === "v-open") {
+    b.disabled = true; b.textContent = "Unlocking…"; const meta = vaultMeta();
+    try { const key = await vaultKey($("#v-pass").value, meta.salt); const c = await vDec(key, meta.check.iv, meta.check.cipher); if (c.ok !== "taskerbay") throw 0; VK = key; await vDecryptAll(); render(); }
+    catch (e) { b.disabled = false; b.textContent = "Unlock"; msg.textContent = "That passphrase isn't right."; $("#v-pass").select(); }
+    return;
+  }
+  if (kind === "v-save") {
+    if (!VK) return render(); const id = f.dataset.id, now = new Date().toISOString();
+    const enc = await vEnc(VK, { title: $("#v-title").value.trim(), body: $("#v-body").value });
+    if (id) { const n = S.db.private_notes.find(x => x.id === id); await update("private_notes", n, { ...enc, updated_at: now }); }
+    else { const row = { id: uuid(), user_id: me(), ...enc, created_at: now, updated_at: now }; await insert("private_notes", row); U.vOpen = row.id; }
+    await vDecryptAll(); toast("Saved, encrypted."); render();
+  }
+}
+
+/* ================= Custom fields ================= */
+const cFields = () => (S.db.custom_fields || []).slice().sort((a, b) => a.position - b.position);
+function customInputs(t) {
+  const fs = cFields(); if (!fs.length) return "";
+  const v = t.custom || {};
+  return `<div class="cf-grid">${fs.map(f => { const val = v[f.id] ?? "", id = `cf-${f.id}`;
+    const inp = f.type === "select" ? `<select class="inp" id="${id}" data-cf="${f.id}" data-task="${t.id}"><option value="">-</option>${f.options.map(o => `<option ${o === val ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
+      : `<input class="inp" id="${id}" data-cf="${f.id}" data-task="${t.id}" type="${f.type === "number" ? "text" : f.type === "date" ? "date" : "text"}" ${f.type === "number" ? 'inputmode="decimal"' : ""} value="${esc(String(val))}" maxlength="200">`;
+    return `<div class="field"><label for="${id}">${esc(f.name)}</label>${inp}</div>`; }).join("")}</div>`;
+}
+const cfChips = t => cFields().filter(f => f.show_chip && t.custom?.[f.id] !== undefined && t.custom[f.id] !== "").slice(0, 3).map(f => `<span class="chip">${esc(f.name)}: ${esc(f.type === "date" ? dueLabel({ due_date: t.custom[f.id] }) : String(t.custom[f.id]))}</span>`);
+function fieldsCard() {
+  const admin = ws()?.owner_id === me() || S.db.workspace_members.some(m => m.user_id === me() && /owner|admin/.test(m.role));
+  const fs = cFields();
+  return `<div class="card"><div class="card-h"><h2>🧩 Custom fields</h2><span class="sub">${esc(ws()?.name || "")}</span></div>
+    <p class="muted" style="margin:0 0 10px;font-size:14px">Extra details on every task in this workspace, e.g. Client, Cost centre, Invoice no., Budget. They show on tasks and work in search.</p>
+    ${fs.length ? `<div class="esc-list">${fs.map(f => `<div class="esc"><span><b>${esc(f.name)}</b> <small class="muted">${{ text: "text", number: "number", date: "date", select: "choice: " + f.options.join(", ") }[f.type]}</small></span>${admin ? `<span class="esc-b"><button class="link" data-action="cf-chip" data-id="${f.id}">${f.show_chip ? "Hide on cards" : "Show on cards"}</button><button class="link danger-t" data-action="cf-del" data-id="${f.id}">Delete</button></span>` : ""}</div>`).join("")}</div>` : ""}
+    ${admin ? `<form data-form="cf-add" class="esc-form"><input class="inp" id="cf-name" placeholder="Field name, e.g. Client" maxlength="40" required style="flex:1 1 160px"><select class="inp" id="cf-type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Choice list</option></select>
+      <input class="inp" id="cf-opts" placeholder="Choices, comma separated" style="flex:1 1 200px;display:none"><button class="btn" type="submit">Add field</button></form>` : `<p class="muted" style="font-size:12.5px">Only workspace admins can add fields.</p>`}</div>`;
+}
+
 /* ================= Morning email ================= */
 function digestCard() {
   if (S.mode !== "cloud") return "";
@@ -3094,7 +3278,7 @@ async function boot() {
       let off = false; try { off = localStorage.getItem("tb.pushOff") === "1"; } catch (e) {}
       if (!off && pushSupported() && Notification.permission === "granted") syncPush(true).then(() => render()).catch(() => {});
     }
-    onChange(() => { if (S.mode === "claude") AI_ON = ENABLE_AI && api.hasAI(); render(); });
+    onChange(() => { if (S.mode === "claude") AI_ON = ENABLE_AI && api.hasAI(); if (VK) vDecryptAll().then(() => render()); else render(); });
     E.runOverdue(); setInterval(() => E.runOverdue(), 3600e3); setTimeout(checkDueAlerts, 1500);
     refreshKnownWords(); SP.loadDict().then(() => { refreshKnownWords(); $$("[data-quick]").forEach(i => { const h = $(`[data-hint-for="${i.id}"]`); if (h && i.value) h.innerHTML = hintFor(i.value); }); });
     // Coming back to the app (phone unlocked, tab reopened, back online): fetch the latest from every device

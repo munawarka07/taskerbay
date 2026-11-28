@@ -775,3 +775,4 @@ alter table public.profiles add column if not exists activation_sent_at timestam
 --      public.admin_overview() for the Admin page.
 -- v21: profiles.region / work_days / holiday_prefs; private.holiday_cache + holidays edge function (Nager.Date proxy). Built-in rules in js/calendar.js.
 -- v22: tasks.blocked_by uuid[] (+guard, unblock notify), time_entries, escalation_rules + private.escalate() cron every 15 min.
+-- v23: private_notes (client-side AES-GCM; profiles.vault holds salt + check only), custom_fields + tasks.custom jsonb.
