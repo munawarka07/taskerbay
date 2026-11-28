@@ -142,7 +142,10 @@ export async function reopenTask(task) { return changeTask(task, { stage: firstS
 export async function deleteTask(task) { return remove("tasks", task); }
 
 // ---- repeat rules: "daily", "weekdays", "weekly", "monthly", "yearly", "every:2w", "weekly:1,4", "monthly:25", "monthly:last", "monthly:lastwd", "monthly:firstwd"
-export const isWorkday = d => d.getDay() !== 0 && d.getDay() !== 6; // UAE working week: Mon–Fri
+// each person's working week and days off (set from their country in Settings; Mon–Fri until loaded)
+export const CAL = { country: "", work: new Set([1, 2, 3, 4, 5]), off: new Map() };
+export const isWorkday = d => CAL.work.has(d.getDay()) && !CAL.off.has(dkey(d));
+export const holidayOn = k => CAL.off.get(k) || null;
 const dim = (y, m) => new Date(y, m + 1, 0).getDate();
 const DOWS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ord = n => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
@@ -175,7 +178,7 @@ export function repeatLabel(r) {
   if (kind === "every") { const n = parseInt(arg, 10), u = { d: "day", w: "week", m: "month" }[arg.slice(-1)]; return n === 2 ? `every other ${u}` : `every ${n} ${u}s`; }
   if (kind === "weekly" && arg) return "every " + arg.split(",").map(x => DOWS[+x]).join(", ");
   if (kind === "monthly" && arg) return arg === "last" ? "last day of each month" : arg === "lastwd" ? "last working day of each month" : arg === "firstwd" ? "first working day of each month" : `monthly on the ${ord(+arg)}`;
-  return { daily: "every day", weekdays: "weekdays", weekly: "every week", monthly: "every month", yearly: "every year" }[r] || r;
+  return { daily: "every day", weekdays: "every working day", weekly: "every week", monthly: "every month", yearly: "every year" }[r] || r;
 }
 // pull a repeat phrase out of a sentence: "pay rent every month on 25th" -> { rule: "monthly:25", rest: "pay rent" }
 const DOWN = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 };

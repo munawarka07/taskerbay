@@ -773,3 +773,4 @@ alter table public.profiles add column if not exists activation_sent_at timestam
 -- v19: approvals (requester / approver, guard + notify triggers), audit_log (task, approval, fund, member, account triggers; 400-day trim cron),
 --      tasks.chased_at / chase_count for automatic follow-up emails (mail function, weekdays 9-18 Dubai, up to 3, tasks overdue <= 14 days),
 --      public.admin_overview() for the Admin page.
+-- v21: profiles.region / work_days / holiday_prefs; private.holiday_cache + holidays edge function (Nager.Date proxy). Built-in rules in js/calendar.js.

@@ -216,6 +216,11 @@ const cloud = {
   },
   async mfaVerify(factorId, code) { const c = await sbClient(); const { error } = await c.auth.mfa.challengeAndVerify({ factorId, code: String(code).replace(/\s/g, "") }); if (error) throw new Error(/invalid|expired/i.test(error.message) ? "That code didn't match. Check the time on your phone and try the newest code." : error.message); },
   async mfaOff(factorId) { const c = await sbClient(); const { error } = await c.auth.mfa.unenroll({ factorId }); if (error) throw error; await c.auth.refreshSession(); },
+  async holidays(country, year) {
+    const c = await sbClient(); const { data: { session } } = await c.auth.getSession();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/holidays`, { method: "POST", headers: { Authorization: `Bearer ${session?.access_token}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ country, year }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Couldn't load holidays"); return j;
+  },
   async verifyActivation(token_hash) { const c = await sbClient(); const { error } = await c.auth.verifyOtp({ token_hash, type: "magiclink" }); if (error) throw error; },
   async signInMethods() { // how this session was signed in: ["password"] or ["otp"] (email link)…
     const c = await sbClient(); const { data: { session } } = await c.auth.getSession(); if (!session) return [];

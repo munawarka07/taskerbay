@@ -858,3 +858,11 @@ html,body{overflow-x:hidden}
 .adm-who{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}.adm-who small{color:var(--muted);width:100%}
 .adm-tags{display:flex;flex-wrap:wrap;gap:6px}.adm-nums{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted)}.adm-nums .red{color:var(--red)}
 .topbar>.ws-btn{min-width:0;flex:0 1 auto}.topbar .top-actions{flex:none}
+.hol-h{display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px;font-size:14px}
+.hol-list{display:grid;border:1px solid var(--line);border-radius:12px;padding:4px 10px;max-height:300px;overflow:auto}
+.hol{display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px dashed var(--line);font-size:13.5px}.hol:first-child{border-top:0}
+.hol .d{flex:none;width:92px;color:var(--muted);font-variant-numeric:tabular-nums}.hol>span:last-of-type{flex:1;min-width:0}
+.hol.off{opacity:.5;text-decoration:line-through}.hol.mine .d{color:var(--accent)}
+.hol-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.hol-add .inp{flex:1 1 130px;min-width:0}
+.weekstrip .day.off{opacity:.6}.weekstrip .day.hol b{color:var(--gold)}
+.pl-hol{font-size:11.5px;font-weight:700;color:var(--gold);margin:2px 0 4px}

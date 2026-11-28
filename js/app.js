@@ -3,6 +3,7 @@ import { S, api, initBackend, onChange, onError, emit, insert, upsert, update, r
 import * as E from "./engine.js";
 import * as SP from "./spell.js";
 import * as TP from "./templates.js";
+import * as CAL from "./calendar.js";
 import { ENABLE_GOOGLE, ENABLE_AI, CURRENCY, VAPID_PUBLIC_KEY } from "./config.js";
 
 const { dkey, parseKey, addDays } = E;
@@ -526,7 +527,7 @@ function vToday(animate) {
   const first = (profile(me())?.full_name || "").split(" ")[0];
   const msg = !ids.size ? "Nothing due today. Star a task to make today count." : pct === 1 ? "Everything due today is done. Brilliant work." : `${ids.size - doneIds.size} left for today. You've got this.`;
   return `
-  ${pushBanner()}<div class="hello"><div><h1>${greeting()}${first && first !== "You" ? `, <em>${esc(first)}</em>` : ""}</h1><p>${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })} · ${esc(ws()?.name || "")}</p></div></div>
+  ${pushBanner()}<div class="hello"><div><h1>${greeting()}${first && first !== "You" ? `, <em>${esc(first)}</em>` : ""}</h1><p>${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })} · ${esc(ws()?.name || "")}${E.holidayOn(dkey()) ? ` · 🎉 ${esc(E.holidayOn(dkey()).name)}` : ""}</p></div></div>
   <div class="grid g-hero">
     <div class="card hero">
       <div class="ring">${ring(animate ? 0 : pct)}<div class="lbl"><div><b class="num">${Math.round(pct * 100)}%</b><small>${doneIds.size} of ${ids.size} today</small></div></div></div>
@@ -606,10 +607,10 @@ function vPlan() {
     return line + `<div class="tl"><div class="tm">${it.time}</div><div>${body}</div></div>`;
   }).join("") + (!nowPlaced ? `<div class="tl now"><div class="tm">${nowT}</div><div class="now-line"></div></div>` : "");
   return `
-  <div class="view-h"><div><h1>Planner</h1><p>${selDate.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</p></div>
+  <div class="view-h"><div><h1>Planner</h1><p>${selDate.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}${E.holidayOn(dkey(selDate)) ? ` · 🎉 ${esc(E.holidayOn(dkey(selDate)).name)}` : !E.isWorkday(selDate) ? " · day off" : ""}</p></div>
     <div class="month-nav"><button class="icon-btn" data-action="week" data-v="-1" aria-label="Previous week">${I.left}</button><button class="btn ghost" data-action="week" data-v="0" style="padding:8px 12px">This week</button><button class="icon-btn" data-action="week" data-v="1" aria-label="Next week">${I.right}</button></div></div>
-  <div class="card"><div class="weekstrip">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !E.isDone(t) && !t.parent_id); const od = ts.some(t => E.dueStatus(t) === "overdue"); return `<button class="day ${k === tk ? "today" : ""} ${sel === k ? "on" : ""}" data-action="plan-day" data-v="${k}"><small>${d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><span class="dots">${ts.slice(0, 4).map(() => `<i class="${od ? "r" : ""}"></i>`).join("")}</span></button>`; }).join("")}</div></div>
-  <div class="pl-cols">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !t.parent_id).sort(sortTasks); return `<div class="pl-day ${k === tk ? "today" : ""}" data-drop-day="${k}"><h4>${d.toLocaleDateString("en-GB", { weekday: "short" })}<b>${d.getDate()}</b></h4>${meetingsOn(k).filter(m => !m.allDay).map(m => `<div class="pl-item pl-meet" data-action="plan-day" data-v="${k}"><small>${hm(m.sm)}</small>${esc(m.title)}</div>`).join("")}${ts.map(t => `<div class="pl-item ${E.isDone(t) ? "done" : ""}" draggable="true" data-drag-task="${t.id}" data-action="open-task" data-id="${t.id}" style="--p:${PRI_C[t.priority]}">${t.due_time ? `<small>${fmtTime(t.due_time)}</small>` : ""}${esc(t.title)}</div>`).join("")}<button class="add-card" style="color:var(--muted);font-weight:700;font-size:12px;padding:6px;text-align:left" data-action="new-task" data-due="${k}">＋ Add</button></div>`; }).join("")}</div>
+  <div class="card"><div class="weekstrip">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !E.isDone(t) && !t.parent_id); const od = ts.some(t => E.dueStatus(t) === "overdue"); return `<button class="day ${k === tk ? "today" : ""} ${sel === k ? "on" : ""} ${E.isWorkday(d) ? "" : "off"} ${E.holidayOn(k) ? "hol" : ""}" data-action="plan-day" data-v="${k}" ${E.holidayOn(k) ? `title="${esc(E.holidayOn(k).name)}"` : ""}><small>${d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><span class="dots">${ts.slice(0, 4).map(() => `<i class="${od ? "r" : ""}"></i>`).join("")}</span></button>`; }).join("")}</div></div>
+  <div class="pl-cols">${days.map(d => { const k = dkey(d); const ts = S.db.tasks.filter(t => t.due_date === k && !t.parent_id).sort(sortTasks); return `<div class="pl-day ${k === tk ? "today" : ""}" data-drop-day="${k}"><h4>${d.toLocaleDateString("en-GB", { weekday: "short" })}<b>${d.getDate()}</b></h4>${E.holidayOn(k) ? `<div class="pl-hol">🎉 ${esc(E.holidayOn(k).name)}</div>` : ""}${meetingsOn(k).filter(m => !m.allDay).map(m => `<div class="pl-item pl-meet" data-action="plan-day" data-v="${k}"><small>${hm(m.sm)}</small>${esc(m.title)}</div>`).join("")}${ts.map(t => `<div class="pl-item ${E.isDone(t) ? "done" : ""}" draggable="true" data-drag-task="${t.id}" data-action="open-task" data-id="${t.id}" style="--p:${PRI_C[t.priority]}">${t.due_time ? `<small>${fmtTime(t.due_time)}</small>` : ""}${esc(t.title)}</div>`).join("")}<button class="add-card" style="color:var(--muted);font-weight:700;font-size:12px;padding:6px;text-align:left" data-action="new-task" data-due="${k}">＋ Add</button></div>`; }).join("")}</div>
   <div class="grid g-2 mt">
     <div class="card"><div class="card-h"><h2>⏰ Timeline</h2><button class="link" data-action="new-task" data-due="${sel}">＋ Add</button></div>
       ${items.length ? `<div class="timeline2">${tl}</div>` : emptyBox("Nothing scheduled", "Give tasks a time (e.g. <b style='display:inline'>3pm</b>) and add routine times to see them here." + ((S.db.calendar_events || []).length ? "" : " Connect your Outlook calendar in Settings to see meetings too."), I.plan)}
@@ -733,7 +734,7 @@ function refreshTaskSheet(first) {
       <div class="field"><label for="tf-pri">Priority</label><select class="inp" id="tf-pri" data-tfield="priority">${["High", "Medium", "Low"].map(p => `<option ${t.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select></div>
       <div class="field"><label for="tf-area">Area</label><select class="inp" id="tf-area" data-tfield="area">${AREAS.map(a => `<option ${t.area === a ? "selected" : ""}>${a}</option>`).join("")}</select></div>
       <div class="field"><label for="tf-wf">Workflow</label><select class="inp" id="tf-wf" data-tfield="workflow_id">${E.workflows().map(w => `<option value="${w.id}" ${w.id === wf?.id ? "selected" : ""}>${esc(w.icon)} ${esc(w.name)}</option>`).join("")}</select></div>
-      <div class="field"><label for="tf-rep">Repeat</label><select class="inp" id="tf-rep" data-tfield="repeat">${(() => { const base = [["", "Never"], ["daily", "Every day"], ["weekdays", "Weekdays (Mon–Fri)"], ["weekly", "Every week"], ["every:2w", "Every other week"], ["monthly", "Every month"], ["monthly:lastwd", "Last working day of the month"], ["monthly:firstwd", "First working day of the month"], ["monthly:last", "Last day of the month"], ["yearly", "Every year"]]; if (t.due_date) { const d = parseKey(t.due_date); base.splice(6, 0, [`monthly:${d.getDate()}`, `Monthly on the ${E.repeatLabel("monthly:" + d.getDate()).replace("monthly on the ", "")}`], [`weekly:${d.getDay()}`, `Every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()]}`]); } if (t.repeat && !base.some(b => b[0] === t.repeat)) base.push([t.repeat, E.repeatLabel(t.repeat)]); return base.filter((b, i, a) => a.findIndex(x => x[0] === b[0]) === i).map(([v, l]) => `<option value="${v}" ${t.repeat === v ? "selected" : ""}>${esc(l[0].toUpperCase() + l.slice(1))}</option>`).join(""); })()}</select></div>
+      <div class="field"><label for="tf-rep">Repeat</label><select class="inp" id="tf-rep" data-tfield="repeat">${(() => { const base = [["", "Never"], ["daily", "Every day"], ["weekdays", "Every working day"], ["weekly", "Every week"], ["every:2w", "Every other week"], ["monthly", "Every month"], ["monthly:lastwd", "Last working day of the month"], ["monthly:firstwd", "First working day of the month"], ["monthly:last", "Last day of the month"], ["yearly", "Every year"]]; if (t.due_date) { const d = parseKey(t.due_date); base.splice(6, 0, [`monthly:${d.getDate()}`, `Monthly on the ${E.repeatLabel("monthly:" + d.getDate()).replace("monthly on the ", "")}`], [`weekly:${d.getDay()}`, `Every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()]}`]); } if (t.repeat && !base.some(b => b[0] === t.repeat)) base.push([t.repeat, E.repeatLabel(t.repeat)]); return base.filter((b, i, a) => a.findIndex(x => x[0] === b[0]) === i).map(([v, l]) => `<option value="${v}" ${t.repeat === v ? "selected" : ""}>${esc(l[0].toUpperCase() + l.slice(1))}</option>`).join(""); })()}</select></div>
       ${members.length > 1 ? `<div class="field"><label for="tf-as">Assigned to</label><select class="inp" id="tf-as" data-tfield="assignee_id"><option value="">Nobody</option>${members.map(u => `<option value="${u}" ${t.assignee_id === u ? "selected" : ""}>${esc(nameOf(u))}${u === me() ? " (me)" : ""}</option>`).join("")}</select></div>` : ""}
       <div class="field"><label for="tf-est">Takes (minutes)</label><input class="inp" type="number" min="0" step="5" id="tf-est" data-tfield="estimate_min" value="${t.estimate_min ?? ""}" inputmode="numeric"></div>
     </div>
@@ -858,6 +859,7 @@ function meetingsCard() {
 }
 function freeSlots(k) {
   const S0 = toMin(FREE.start), S1 = Math.max(toMin(FREE.end), S0 + 30);
+  if (!E.isWorkday(parseKey(k))) return { busy: dayBusy(k), gaps: [], slots: [], S0, S1, from: S1, off: E.holidayOn(k)?.name || "Day off" };
   let from = S0;
   if (k === dkey()) { const n = new Date(); from = Math.max(S0, Math.ceil((n.getHours() * 60 + n.getMinutes()) / 5) * 5); }
   const busy = dayBusy(k), gaps = []; let cur = from;
@@ -887,10 +889,11 @@ function freeCard() {
   </div><div class="fticks"><span>${fmt12(S0)}</span><span>${fmt12(S0 + Math.round(span / 2 / 30) * 30)}</span><span>${fmt12(S1)}</span></div>`;
   return `<div class="card free-card">
     <div class="card-h"><h2>🕒 Free time</h2><span class="sub">${total ? `${durTxt(total)} free` : "Fully booked"}</span></div>
-    <div class="fdays">${[...Array(7)].map((_, i) => { const d = addDays(new Date(), i), dk = dkey(d), f = freeSlots(dk).slots.reduce((s, [a, b]) => s + b - a, 0); return `<button class="${dk === k ? "on" : ""} ${[0, 6].includes(d.getDay()) ? "wkend" : ""}" data-action="free-day" data-v="${dk}"><small>${i === 0 ? "Today" : d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><em>${f ? durTxt(f) : "full"}</em></button>`; }).join("")}</div>
+    <div class="fdays">${[...Array(7)].map((_, i) => { const d = addDays(new Date(), i), dk = dkey(d), f = freeSlots(dk).slots.reduce((s, [a, b]) => s + b - a, 0); const offD = !E.isWorkday(d), hol = E.holidayOn(dk); return `<button class="${dk === k ? "on" : ""} ${offD ? "wkend" : ""}" data-action="free-day" data-v="${dk}" ${hol ? `title="${esc(hol.name)}"` : ""}><small>${i === 0 ? "Today" : d.toLocaleDateString("en-GB", { weekday: "short" })}</small><b class="num">${d.getDate()}</b><em>${hol ? "Holiday" : offD ? "Off" : f ? durTxt(f) : "full"}</em></button>`; }).join("")}</div>
     ${bar}
-    <div class="flegend"><span><i class="free"></i>Free</span><span><i class="busy"></i>Busy</span><span><i class="busy quick"></i>Quick task</span>${busy.some(b => b.meet) ? `<span><i class="busy meet"></i>Meeting</span>` : ""}${[0, 6].includes(dow) ? `<span class="chip">Weekend</span>` : ""}</div>
+    <div class="flegend"><span><i class="free"></i>Free</span><span><i class="busy"></i>Busy</span><span><i class="busy quick"></i>Quick task</span>${busy.some(b => b.meet) ? `<span><i class="busy meet"></i>Meeting</span>` : ""}${E.holidayOn(k) ? `<span class="chip">🎉 ${esc(E.holidayOn(k).name)}</span>` : !E.isWorkday(parseKey(k)) ? `<span class="chip">Day off</span>` : ""}</div>
     <div class="slots">${slots.length ? slots.map(([a, b]) => `<div class="slot"><div><b>${fmt12(a)} – ${fmt12(b)}</b><small>${durTxt(b - a)} free</small></div><button class="btn ghost" data-action="free-book" data-d="${k}" data-t="${minT(a)}">Book</button></div>`).join("")
+      : !E.isWorkday(parseKey(k)) ? `<p class="muted" style="margin:4px 0">${E.holidayOn(k) ? `${esc(E.holidayOn(k).name)}: a public holiday` : "Not a working day"}${E.CAL.country ? ` in ${esc(CAL.countryName(E.CAL.country))}` : ""}. Change your working days in Settings → Region.</p>`
       : `<p class="muted" style="margin:4px 0">No free slot of ${durTxt(FREE.min)} or more ${k === tk ? "left today" : `on ${dayName(k)}`} between ${fmt12(S0)} and ${fmt12(S1)}.</p>`}</div>
     ${busy.length ? `<details class="fbusy"><summary>Busy: ${busy.length} item${busy.length > 1 ? "s" : ""}</summary>${busy.map(b => `<div ${b.id ? `data-action="open-task" data-id="${b.id}" role="button" tabindex="0"` : ""}><b>${fmt12(b.s)}</b><span>${esc(b.label)}</span><small>${durTxt(b.d)}</small></div>`).join("")}</details>` : ""}
     <div class="fact"><button class="btn" data-action="free-share" data-v="day">Share ${k === tk ? "today" : dayName(k)}</button><button class="btn ghost" data-action="free-share" data-v="week">Share next 7 days</button></div>
@@ -1432,6 +1435,7 @@ function vSettings() {
       <form data-form="profile"><div class="field"><label for="pf-name">Your name</label><input class="inp" id="pf-name" value="${esc(p.full_name || "")}"></div><button class="btn" type="submit">Save</button></form></div>
     ${accessCard()}
     ${calendarCard()}
+    ${regionCard()}
     ${digestCard()}
     ${packsCard()}
     ${mfaCard()}
@@ -1462,7 +1466,7 @@ function chooser() {
 /* ================= Bulk add: paste many lines, each becomes a task ================= */
 const WORK_RX = /\b(payroll|payslips?|salar(y|ies)|wps|hr|invoices?|clients?|meetings?|reports?|visa|labou?r|mohre|employees?|staff|leaves?|gratuity|offer letters?|contracts?|audit|vat|finance|office|manager|boss|team|project|onboarding|recruit\w*|interview\w*|attendance|overtime|eosb|insur\w*|emirates id|approval|fines?|signatures?|d?docs?|documents?|process\w*|procee+d\w*|check with|follow up with|medical|passport|resignation|termination|settlement|allowances?|deductions?|bonus|appraisal)\b/i;
 const URGENT_RX = /\b(urgent|asap|immediately|important|critical|today itself)\b/i;
-function nextWorkday(from = new Date()) { let d = addDays(from, 1); while (d.getDay() === 0 || d.getDay() === 6) d = addDays(d, 1); return dkey(d); } // UAE weekend: Sat & Sun
+function nextWorkday(from = new Date()) { let d = addDays(from, 1); while (!E.isWorkday(d)) d = addDays(d, 1); return dkey(d); } // the person's own working week and holidays
 function splitBulk(text) {
   let lines = text.replace(/\r/g, "").split(/\n+/);
   if (lines.filter(l => l.trim()).length === 1) { const one = lines.join(" "); lines = one.includes(";") ? one.split(";") : one.split(/(?<=[.!?])\s+(?=[A-Z0-9])/); }
@@ -1850,6 +1854,7 @@ document.addEventListener("click", async e => {
   if (act.startsWith("cal-")) { await calendarAction(act, a); return; }
   if (act.startsWith("dg-")) { await digestAction(act, a); return; }
   if (act === "voice") { voiceStart(a); return; }
+  if (act.startsWith("rg-")) { try { await regionAction(act, a); } catch (e) { toast(e.message); } return; }
   if (act.startsWith("mfa-")) { await mfaAction(act, a); return; }
   if (act.startsWith("ap-")) { await apAction(act, a); return; }
   if (act === "nudge") { a.disabled = true; try { const r = await api.mail("nudge", a.dataset.id); toast(r?.sent ? `Reminder emailed to ${r.email}.` : "They can't be emailed right now."); } catch (e) { toast(e.message); } a.disabled = false; return; }
@@ -2003,6 +2008,8 @@ document.addEventListener("click", async e => {
 function reopenAuto() { const s = U.sheet; autoSheet(s.a, s.isNew); }
 
 document.addEventListener("change", async e => {
+  if (e.target.id === "rg-c") { const c = e.target.value; try { await saveRegion({ region: c, work_days: CAL.defaultWorkDays(c) }); toast(`Using ${CAL.countryName(c)}'s weekend and holidays.`); } catch (err) { toast(err.message); } return; }
+  if (e.target.dataset?.hol) { const d = e.target.dataset.hol, p = { off: [], add: [], ...holPrefs() }; const set = new Set(p.off); e.target.checked ? set.delete(d) : set.add(d); p.off = [...set]; try { await saveRegion({ holiday_prefs: p }); } catch (err) { toast(err.message); } return; }
   if (e.target.dataset?.pack) { const k = e.target.dataset.pack, cur = new Set(myPacks()); e.target.checked ? cur.add(k) : cur.delete(k); const v = [...cur], pr = profile(me());
     try { localStorage.setItem("tb.packs", JSON.stringify(v)); } catch (err) {}
     if (pr) localUpsert("profiles", { ...pr, template_packs: v });
@@ -2070,6 +2077,7 @@ document.addEventListener("submit", async e => {
   e.preventDefault(); const f = e.target, kind = f.dataset.form;
   if (kind?.startsWith("fd-")) { await fundSubmit(kind, f, e); return; }
   if (kind === "tpl") { await tplCreate(f); return; }
+  if (kind === "rg-add") { const d = $("#rg-date").value; if (!d) return; const p = { off: [], add: [], ...holPrefs() }; p.add = [...p.add.filter(h => h.date !== d), { date: d, name: $("#rg-name").value.trim() || "Day off" }].sort((a, b) => a.date.localeCompare(b.date)).slice(-200); try { await saveRegion({ holiday_prefs: p }); toast("Day off added."); } catch (err) { toast(err.message); } return; }
   if (kind === "ap-new") { await apSubmit(f); return; }
   if (kind === "ap-decide") { const row = (S.db.approvals || []).find(x => x.id === f.dataset.id); if (!row) return; const ok = f.dataset.ok === "1", b = f.querySelector("[type=submit]"); b.disabled = true;
     try { await update("approvals", row, { status: ok ? "approved" : "rejected", decision_note: $("#ap-note").value.trim() }); closeSheet(); toast(ok ? "Approved." : "Rejected."); } catch (err) { b.disabled = false; toast(err.message); } return; }
@@ -2757,6 +2765,66 @@ function vAdmin() {
   </div>`).join("")}</div></div>`;
 }
 
+/* ================= Region: working week + public holidays ================= */
+const holPrefs = () => profile(me())?.holiday_prefs || (() => { try { return JSON.parse(localStorage.getItem("tb.holprefs") || "{}"); } catch (e) { return {}; } })();
+function myRegion() {
+  const p = profile(me()) || {}; let c = p.region; try { c = c || localStorage.getItem("tb.region"); } catch (e) {}
+  c = c || CAL.guessCountry();
+  const work = p.work_days?.length ? p.work_days : (() => { try { return JSON.parse(localStorage.getItem("tb.workdays") || "null"); } catch (e) { return null; } })() || CAL.defaultWorkDays(c);
+  return { c, work };
+}
+const holBase = {}; // "AE:2026" -> [{date,name,expected}]
+async function baseHolidays(c, y) {
+  const k = `${c}:${y}`; if (holBase[k]) return holBase[k];
+  const built = CAL.builtInHolidays(c, y); if (built) return (holBase[k] = built);
+  try { const c0 = JSON.parse(localStorage.getItem("tb.hol." + k) || "null"); if (c0 && Date.now() - c0.t < 7 * 864e5) return (holBase[k] = c0.list); } catch (e) {}
+  if (S.mode !== "cloud") return (holBase[k] = []);
+  try { const r = await api.holidays(c, y); holBase[k] = r.holidays || []; holBase[k].available = r.available; try { localStorage.setItem("tb.hol." + k, JSON.stringify({ t: Date.now(), list: holBase[k] })); } catch (e) {} }
+  catch (e) { holBase[k] = []; }
+  return holBase[k];
+}
+async function loadCalendar() {
+  const { c, work } = myRegion(), y = new Date().getFullYear();
+  E.CAL.country = c; E.CAL.work = new Set(work);
+  const base = [...await baseHolidays(c, y), ...await baseHolidays(c, y + 1)];
+  E.CAL.off = CAL.mergeHolidays(base, holPrefs());
+}
+async function saveRegion(patch) {
+  const pr = profile(me());
+  if (patch.region) try { localStorage.setItem("tb.region", patch.region); } catch (e) {}
+  if (patch.work_days) try { localStorage.setItem("tb.workdays", JSON.stringify(patch.work_days)); } catch (e) {}
+  if (patch.holiday_prefs) try { localStorage.setItem("tb.holprefs", JSON.stringify(patch.holiday_prefs)); } catch (e) {}
+  if (pr) localUpsert("profiles", { ...pr, ...patch });
+  if (S.mode === "cloud") await api.updateProfile(patch);
+  await loadCalendar(); render();
+}
+function regionCard() {
+  const { c, work } = myRegion(), y = U.holYear || new Date().getFullYear(), prefs = holPrefs(), off = new Set(prefs.off || []);
+  const base = holBase[`${c}:${y}`];
+  if (!base) baseHolidays(c, y).then(() => render());
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], order = [1, 2, 3, 4, 5, 6, 0];
+  const mine = (prefs.add || []).filter(h => h.date.startsWith(String(y)));
+  const fd = k => parseKey(k).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  return `<div class="card"><div class="card-h"><h2>🌍 Region &amp; working days</h2></div>
+    <p class="muted" style="margin:0 0 10px;font-size:14px">Your country's weekend and public holidays are skipped by working-day repeats, templates, “next working day” and Free time.</p>
+    <div class="field"><label for="rg-c">Country</label><select class="inp" id="rg-c">${CAL.COUNTRIES.map(([k, n]) => `<option value="${k}" ${k === c ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
+    <div class="field"><span class="lab">Working days</span><div class="seg wrap">${order.map(d => `<button class="${work.includes(d) ? "on" : ""}" data-action="rg-day" data-v="${d}">${days[d]}</button>`).join("")}</div></div>
+    <div class="hol-h"><b>Public holidays ${y}</b><span><button class="link" data-action="rg-year" data-v="${y - 1}">‹ ${y - 1}</button> <button class="link" data-action="rg-year" data-v="${y + 1}">${y + 1} ›</button></span></div>
+    ${!base ? `<p class="muted">Loading…</p>` : !base.length && !mine.length ? `<p class="muted" style="font-size:13.5px">${base.available === false ? `We don't have a public holiday list for ${esc(CAL.countryName(c))} yet. Add your days off below.` : "No public holidays found."}</p>` :
+      `<div class="hol-list">${base.map(h => `<label class="hol ${off.has(h.date) ? "off" : ""}"><input type="checkbox" data-hol="${h.date}" ${off.has(h.date) ? "" : "checked"}><span class="d">${fd(h.date)}</span><span>${esc(h.name)}${h.expected ? ` <small class="muted">expected</small>` : ""}</span></label>`).join("")}
+       ${mine.map(h => `<div class="hol mine"><span class="d">${fd(h.date)}</span><span>${esc(h.name)} <small class="muted">your day off</small></span><button class="link danger-t" data-action="rg-del" data-v="${h.date}">Remove</button></div>`).join("")}</div>`}
+    ${base?.some(h => h.expected) ? `<p class="muted" style="font-size:12.5px;margin:8px 0 0">“Expected” dates follow the moon sighting and can move by a day. Untick a day that isn't off, or add the official one below.</p>` : ""}
+    ${CAL.countryNote(c) ? `<p class="muted" style="font-size:12.5px;margin:8px 0 0">${esc(CAL.countryNote(c))}</p>` : ""}
+    <form data-form="rg-add" class="hol-add"><input class="inp" type="date" id="rg-date" required aria-label="Date"><input class="inp" id="rg-name" placeholder="e.g. Company holiday" maxlength="60" aria-label="Name"><button class="btn ghost" type="submit">Add day off</button></form>
+  </div>`;
+}
+async function regionAction(act, a) {
+  const { work } = myRegion(), prefs = { off: [], add: [], ...holPrefs() };
+  if (act === "rg-day") { const d = +a.dataset.v, set = new Set(work); set.has(d) ? set.delete(d) : set.add(d); if (!set.size) return toast("Keep at least one working day."); await saveRegion({ work_days: [...set].sort() }); return; }
+  if (act === "rg-year") { U.holYear = +a.dataset.v; render(); return; }
+  if (act === "rg-del") { prefs.add = prefs.add.filter(h => h.date !== a.dataset.v); await saveRegion({ holiday_prefs: prefs }); toast("Removed."); }
+}
+
 /* ================= Morning email ================= */
 function digestCard() {
   if (S.mode !== "cloud") return "";
@@ -2878,11 +2946,13 @@ async function boot() {
     S.wsId = S.db.workspaces.some(w => w.id === saved) ? saved : (S.db.workspaces.find(w => w.owner_id === user.id && w.name === "Personal") || S.db.workspaces[0])?.id;
     if (!S.wsId) { $("#root").innerHTML = `<div class="auth"><div class="auth-card"><h1>Almost there</h1><p class="lead">Your account has no workspace yet. Make sure the database setup script has been run, then reload.</p><button class="btn" onclick="location.reload()">Reload</button></div></div>`; return; }
     await api.loadWorkspace(S.wsId);
+    { const cal = loadCalendar().catch(() => {}); await Promise.race([cal, new Promise(r => setTimeout(r, 1500))]); cal.then(() => S.ready && render()); }
     shell(); S.ready = true;
     const h = location.hash.slice(1); U.view = VIEWS[h] ? h : "today";
     render(true);
     openFromHash();
     if (S.mode === "cloud") {
+      try { const pr = profile(me()); if (pr && !pr.region) { const rg = myRegion(); await api.updateProfile({ region: rg.c }); localUpsert("profiles", { ...pr, region: rg.c }); } } catch (e) {}
       try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; const pr = profile(me()); if (tz && pr && pr.timezone !== tz) { await api.updateProfile({ timezone: tz }); localUpsert("profiles", { ...pr, timezone: tz }); } } catch (e) {}
       let off = false; try { off = localStorage.getItem("tb.pushOff") === "1"; } catch (e) {}
       if (!off && pushSupported() && Notification.permission === "granted") syncPush(true).then(() => render()).catch(() => {});
